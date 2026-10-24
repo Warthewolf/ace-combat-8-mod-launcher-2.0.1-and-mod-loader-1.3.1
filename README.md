@@ -9,13 +9,26 @@ AC8 Mod Loader (IoStoreLoaderMod) for Ace Combat 8 on PC.
 - **AC8 Mod Loader 1.3.1** is a UE4SS C++ mod that loads `.utoc`/`.ucas` mods and
   `*_P.pak` mods (text, fonts and other files the game keeps in `.pak` files).
 
-Ready-to-use downloads are on the [Releases](../../releases) page. Players don't
+Ready-to-use downloads are on the [Releases](https://github.com/Warthewolf/ace-combat-8-mod-launcher-2.0.1-and-mod-loader-1.3.1/releases) page. Players don't
 need anything in this repository.
+
+## Documentation
+
+- [Getting started on Windows](docs/getting-started-windows.md)
+- [Linux and Steam Deck](docs/linux-and-steam-deck.md)
+- [Managing mods](docs/managing-mods.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [After a game update](docs/game-updates.md)
+- [For mod makers](docs/mod-makers.md)
+- [How the launcher works](docs/launcher-internals.md)
+- [How the Mod Loader works](docs/mod-loader-internals.md)
+- [Building and releasing](docs/releasing.md)
 
 ## Layout
 
 | Folder | What's in it |
 |---|---|
+| `docs/` | The guides above |
 | `launcher/` | The launcher: Go program with its window (`ui/`) built in |
 | `launcher/package/` | The README, CHANGELOG and READ ME FIRST files shipped with the downloads |
 | `launcher/winres/` | Windows icon, version information and manifest (`rsrc_windows_amd64.syso` is built from these) |
