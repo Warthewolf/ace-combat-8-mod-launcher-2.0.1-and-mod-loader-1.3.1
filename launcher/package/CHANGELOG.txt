@@ -1,0 +1,62 @@
+ACE8 Mod Launcher - changelog
+=============================
+
+2.0.1 (2026-10-22)
+------------------
+- "Last game start" reads Mod Loader 1.3.1's log correctly. Mods that come
+  as _P.pak + .utoc + .ucas showed as "Not loaded" even though they loaded.
+- Pak mods ending in _P.pak (text, fonts and other .pak files) are listed,
+  ordered and switched on and off like .utoc mods. They need Mod Loader
+  1.3.1, which comes with the download.
+- No "install files" folder any more. Once UE4SS and the Mod Loader are in
+  the game, the launcher needs nothing next to it. To install, it uses the
+  Mod Loader download next to its folder ("War's Mod Loader 1.3.1"), or
+  you copy that folder's Game folder into the game yourself.
+- Linux and Steam Deck version (separate download). Steam starts the game
+  through Proton; a line in the game's Steam launch options (the launcher
+  shows it, copies it, or sets it while Steam is closed) starts it with
+  anti-cheat off while Modded and unchanged while Unmodded, so Steam's own
+  Play button and Steam Deck Game Mode work too.
+- The Windows program no longer contains any of the Linux parts.
+- Starting a new version of the launcher while an older one is still open
+  closes the older one, instead of showing its window.
+
+2.0.0 (2026-10-14)
+------------------
+One app for switching between Modded and Unmodded, managing your mods
+and starting the game.
+
+- Modded / Unmodded switch. Unmodded moves UE4SS, the Mod Loader and every
+  mod out of the game into a storage folder next to it, so the game is
+  back to how Steam installed it and online play works. Modded moves them
+  back. Nothing is deleted; a switch that can't finish is undone.
+- Play button. Modded starts AceCombat8.exe directly without anti-cheat
+  (-eac-nop-loaded, the same as ac8noeac.bat); Steam launch options and
+  AC8_Offline.json are no longer needed. Unmodded starts the game through
+  Steam as normal.
+- Warns you when Steam's launch options still turn anti-cheat off.
+- Mods page: switch mods on and off, drag to change the load order, see
+  which mods change the same game files and which one wins.
+- Add mods by dropping a .zip or folder on the window. Several versions in
+  one download: you choose one. An older copy of the same mod is moved to
+  Removed mods.
+- Remove, restore and delete mods.
+- UE4SS script mods can be switched on and off.
+- Installs and updates UE4SS and the Mod Loader without touching your
+  settings, mods or load order. The Mod Loader's old ModLauncher.bat
+  is not installed any more: the launcher's Mods page does its job.
+- Shows which mods loaded the last time the game started, from the Mod
+  Loader's log.
+- Support report you can copy and paste into a message.
+- Choose where the mod storage folder is (Settings). Everything already in
+  it is moved for you.
+- Switching works even while a program (an Explorer window, an editor) has
+  a folder inside ue4ss open: what is inside is moved piece by piece.
+- "Open in Explorer" brings the Explorer window to the front.
+- Modded starts even when AceCombat8.exe is set to run as administrator:
+  Windows asks for permission, and the launcher explains how to stop that.
+- File and folder pickers are Windows' own dialogs. The launcher starts no
+  scripts or hidden programs.
+- Styled after Ace Combat's own menus, with Night, Day and Auto colours.
+
+Any issues please contact @voidcallsreaper on Discord.

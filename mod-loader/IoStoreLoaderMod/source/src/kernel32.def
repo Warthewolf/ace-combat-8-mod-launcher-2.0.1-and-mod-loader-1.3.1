@@ -1,0 +1,35 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+    EnterCriticalSection
+    LeaveCriticalSection
+GetModuleHandleW
+GetModuleFileNameW
+GetModuleHandleExW
+DisableThreadLibraryCalls
+CreateFileW
+ReadFile
+WriteFile
+GetFileSize
+FlushFileBuffers
+CloseHandle
+GetFileAttributesW
+FindFirstFileW
+FindNextFileW
+FindClose
+MultiByteToWideChar
+WideCharToMultiByte
+VirtualAlloc
+VirtualProtect
+VirtualQuery
+FlushInstructionCache
+GetCurrentProcess
+GetCurrentProcessId
+GetCurrentThreadId
+CreateToolhelp32Snapshot
+Thread32First
+Thread32Next
+OpenThread
+SuspendThread
+ResumeThread
+GetThreadContext
+Sleep

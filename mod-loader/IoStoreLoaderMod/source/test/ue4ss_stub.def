@@ -1,0 +1,4 @@
+LIBRARY UE4SS.dll
+EXPORTS
+"??0CppUserModBase@RC@@QEAA@XZ"=ctor_stub
+"??1CppUserModBase@RC@@UEAA@XZ"=dtor_stub

@@ -1,0 +1,39 @@
+AC8 mod loader 1.1.0
+mod root=C:\Games\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod
+mount signature matches=1 address=00000001427E4AA0
+signature requirement matches=1 branch=0000000141796B23
+new files: the game's package store code found at 0000000142800BAC
+hook installed, waiting for the game to mount pakchunk0-Windows.utoc
+stock mount code=0 order=0 path=../../../Game/Content/Paks/global.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk20optional-Windows.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk20-Windows.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk10optional-Windows.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk10-Windows.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk0optional-Windows.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk0-Windows.utoc
+mods found=4 (loader folder 4, ~mods 0)
+~mods folder=(none)
+loadorder.txt=found
+  on   RodsFROMGOD
+  on   SkyEdit
+  listed but not found (ignored): SkinSlotTest
+  on   zz_SkinStudio_SkinList
+  on   navy_paint  (not in loadorder.txt)
+temporary unsigned-container bypass=on
+new files: the game's package store was found; each mod is handed to it, so files new to the game load too
+mounting [RodsFROMGOD] order=1000 path=C:\Games\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\RodsFROMGOD\rodsFROMGOD24.utoc
+  result code=0 message=OK
+  package store: 8 packages, 4 import lists updated, 4 already matching, 0 not in the base game
+  package store: 4 lists needed more room (0 reuse an identical list already in memory, 4 got new memory)
+mounting [SkyEdit] order=1001 path=C:\Games\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\SkyEdit\SkyEdit.utoc
+  result code=0 message=OK
+  package store: 3 packages, 0 import lists updated, 3 already matching, 0 not in the base game
+mounting [zz_SkinStudio_SkinList] order=1002 path=C:\Games\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\zz_SkinStudio_SkinList\zz_SkinStudio_SkinList_P.utoc
+  result code=0 message=OK
+  package store: 2 packages, 0 import lists updated, 2 already matching, 0 not in the base game
+mounting [navy_paint] order=1003 path=C:\Games\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\navy_paint\navypaint_kbqow_P.utoc
+  result code=0 message=OK
+  package store: 4 packages, 0 import lists updated, 0 already matching, 4 not in the base game
+signature branch restored=yes
+done: 4 of 4 containers mounted from 4 mod(s)
+new files: 4 of 4 containers handed to the game's package store

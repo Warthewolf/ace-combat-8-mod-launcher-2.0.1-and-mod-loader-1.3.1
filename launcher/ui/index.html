@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en" data-os="windows">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACE8 Mod Launcher</title>
+<link rel="icon" href="icon.png">
+<script>
+try { var th = localStorage.getItem('ace8-theme'); if (th === 'light' || th === 'dark') document.documentElement.dataset.theme = th; } catch (e) {}
+</script>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">
+      <img src="logo.png" alt="" class="brand-art">
+      <div class="brand-name">ACE8 <span>Mod Launcher</span></div>
+    </div>
+    <nav class="nav" aria-label="Pages">
+      <button data-page="play" aria-current="page">Play</button>
+      <button data-page="mods">Mods<span class="badge" id="navModsBadge" hidden></span></button>
+      <button data-page="settings">Settings<span class="badge" id="navSetBadge" hidden>!</span></button>
+      <button data-page="help">Help</button>
+    </nav>
+    <div class="rail-foot">
+      <div class="seg" role="group" aria-label="Colours">
+        <button data-theme="system" title="Follow Windows">Auto</button><button data-theme="dark">Night</button><button data-theme="light">Day</button>
+      </div>
+      <p class="contact" id="contact"></p>
+      <p class="ver" id="ver"></p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="hud" id="hud" aria-label="Status"></header>
+    <div class="scroll" id="scroll">
+
+      <!-- ===================== PLAY ===================== -->
+      <section class="page" id="page-play" aria-labelledby="h-play">
+        <h1 id="h-play" class="page-title">Play</h1>
+
+        <div id="findGame" hidden class="card bad big">
+          <h3>Game not found</h3>
+          <p>Choose the <b>ACE COMBAT 8</b> folder. It is usually <span class="path">…\steamapps\common\ACE COMBAT 8</span>.</p>
+          <div class="row"><button class="btn primary" id="btnPickGame1">Choose the game folder</button></div>
+        </div>
+
+        <div id="playBody">
+          <div id="welcome" class="card info welcome" hidden>
+            <img src="badge.png" alt="" width="56" height="56">
+            <div>
+              <h3>Welcome</h3>
+              <p><b>Modded</b> runs UE4SS and your mods, offline only. <b>Unmodded</b> is the clean game for online play. The launcher moves the files for you and never deletes them.</p>
+              <button class="btn" id="btnWelcome">Got it</button>
+            </div>
+          </div>
+
+          <div class="mode" role="radiogroup" aria-label="Play with or without mods" id="modeSwitch">
+            <button role="radio" class="mode-opt" data-mode="modded" id="optModded">
+              <span class="lamp" aria-hidden="true"></span>
+              <span class="mode-name">Modded</span>
+              <span class="mode-desc" id="descModded"></span>
+              <span class="mode-sub">Offline only</span>
+            </button>
+            <button role="radio" class="mode-opt" data-mode="unmodded" id="optUnmodded">
+              <span class="lamp" aria-hidden="true"></span>
+              <span class="mode-name">Unmodded</span>
+              <span class="mode-desc">Stock game</span>
+              <span class="mode-sub">Online, anti-cheat on</span>
+            </button>
+            <div class="mode-sweep" aria-hidden="true"></div>
+          </div>
+          <p class="mode-note" id="modeNote" role="status"></p>
+
+          <button class="play" id="btnPlay"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2v12l11-6z"/></svg><span id="playLabel">Play</span></button>
+          <div class="launch-info">
+            <p id="playHow"></p>
+            <p id="playLive" class="live" role="status"></p>
+          </div>
+
+          <div id="todo" class="todo"></div>
+
+          <section class="lastrun" id="lastRun" hidden aria-labelledby="h-last">
+            <div class="sec-head"><h2 id="h-last">Last game start</h2><button class="link" id="btnShowLog">Mod Loader log</button></div>
+            <p id="lastSummary" class="fine"></p>
+            <ul id="lastMods" class="lastmods"></ul>
+          </section>
+        </div>
+      </section>
+
+      <!-- ===================== MODS ===================== -->
+      <section class="page" id="page-mods" hidden aria-labelledby="h-mods">
+        <div class="page-head">
+          <h1 id="h-mods" class="page-title">Mods</h1>
+          <div class="row">
+            <button class="btn primary" id="btnAddFiles">Add mods…</button>
+            <button class="btn" id="btnAddFolder">Add folder…</button>
+            <button class="btn ghost" id="btnOpenLoader">Open folder</button>
+          </div>
+        </div>
+        <p class="hint">Drop a mod's .zip or folder anywhere in this window. Changes apply the next time the game starts.</p>
+        <div id="modsBanner"></div>
+
+        <section aria-labelledby="h-order" class="block">
+          <div class="sec-head"><h2 id="h-order">Load order</h2><span class="sub" id="orderSub"></span></div>
+          <p class="fine">Lower in the list loads later and wins when two mods change the same file. Drag by the handle, or select a mod and press Alt + ↑ / ↓.</p>
+          <ol class="list" id="pakList"></ol>
+          <div class="empty" id="pakEmpty" hidden><p>No mods yet. Drop a mod's .zip here, or press <b>Add mods…</b></p></div>
+        </section>
+
+        <section aria-labelledby="h-scripts" class="block">
+          <div class="sec-head"><h2 id="h-scripts">Script mods</h2><span class="sub">UE4SS Lua and C++. Order doesn't matter.</span></div>
+          <ul class="list" id="scriptList"></ul>
+          <div class="empty" id="scriptEmpty" hidden><p>No script mods installed.</p></div>
+        </section>
+
+        <details class="block removed" id="removedBlock" hidden>
+          <summary><h2>Removed mods</h2><span class="sub" id="removedSub"></span></summary>
+          <p class="fine">Kept in the mod storage folder until you delete them.</p>
+          <ul class="list" id="removedList"></ul>
+        </details>
+      </section>
+
+      <!-- ===================== SETTINGS ===================== -->
+      <section class="page" id="page-settings" hidden aria-labelledby="h-settings">
+        <h1 id="h-settings" class="page-title">Settings</h1>
+
+        <section class="block" aria-labelledby="h-gf">
+          <h2 id="h-gf">Game folder</h2>
+          <p class="path big" id="setGamePath"></p>
+          <div class="row"><button class="btn" id="btnPickGame2">Change…</button><button class="btn ghost" id="btnOpenGame" data-fm>Open in Explorer</button></div>
+        </section>
+
+        <section class="block" aria-labelledby="h-start">
+          <h2 id="h-start">Starting the game</h2>
+          <div data-os="windows">
+          <dl class="starts">
+            <dt>Modded</dt>
+            <dd>The launcher starts it with anti-cheat off, like ac8noeac.bat. Steam has to be running; the launcher opens it if needed.
+              <code class="cmd" id="cmdDirect"></code></dd>
+            <dt>Unmodded</dt>
+            <dd>Steam starts it as normal, with anti-cheat on.</dd>
+          </dl>
+          <div id="steamOptsNote"></div>
+          <label class="field"><span>Extra launch options for Modded <span class="fine">optional, for example -dx11</span></span>
+            <input type="text" id="extraArgs" spellcheck="false" autocomplete="off"></label>
+          </div>
+          <div data-os="linux">
+          <dl class="starts">
+            <dt>Modded</dt>
+            <dd>Steam starts it through Proton with anti-cheat off. A line in the game's Steam launch options does this, so Steam's own Play button and Game Mode on the Steam Deck work too.</dd>
+            <dt>Unmodded</dt>
+            <dd>Steam starts it as normal, with anti-cheat on. The line can stay in Steam: while Unmodded it changes nothing.</dd>
+          </dl>
+          <div id="linuxOpts"></div>
+          </div>
+        </section>
+
+        <section class="block" aria-labelledby="h-storage">
+          <h2 id="h-storage">Mod storage folder</h2>
+          <p class="fine">Switched-off and removed mods are kept here. Change… moves them for you: pick an empty folder, or any folder and the launcher makes "ACE COMBAT 8 - mod storage" inside it.</p>
+          <p class="path big" id="storagePath"></p>
+          <p class="fine" id="storageNote"></p>
+          <div class="row">
+            <button class="btn" id="btnPickStorage">Change…</button>
+            <button class="btn ghost" id="btnDefaultStorage" hidden>Use the default</button>
+            <button class="btn ghost" id="btnOpenStorage" data-fm>Open in Explorer</button>
+          </div>
+        </section>
+
+        <section class="block" aria-labelledby="h-setup">
+          <h2 id="h-setup">Modding setup</h2>
+          <ul class="checks" id="setupChecks"></ul>
+          <div class="row" id="setupActions"></div>
+        </section>
+
+        <section class="block" aria-labelledby="h-support">
+          <h2 id="h-support">Support</h2>
+          <p class="fine">The report has your setup, mods and latest logs, ready to paste into a message. Your Windows user name is left out.</p>
+          <div class="row">
+            <button class="btn" id="btnReport">Copy support report</button>
+            <button class="btn ghost" id="btnShowLog2">Mod Loader log</button>
+            <button class="btn ghost" id="btnLauncherLog">Launcher log</button>
+          </div>
+        </section>
+
+        <section class="block about" aria-labelledby="h-about">
+          <h2 id="h-about">About</h2>
+          <p id="aboutText" class="fine"></p>
+        </section>
+      </section>
+
+      <!-- ===================== HELP ===================== -->
+      <section class="page help" id="page-help" hidden aria-labelledby="h-help">
+        <h1 id="h-help" class="page-title">Help</h1>
+        <details open><summary>Modded and Unmodded</summary>
+          <p><b>Unmodded</b> moves UE4SS, the Mod Loader and every mod out of the game into the mod storage folder. Play then starts the game through Steam with anti-cheat on, so online play works.</p>
+          <p data-os="windows"><b>Modded</b> moves everything back. Play then starts the game directly with anti-cheat off, which UE4SS and the mods need. Offline and single player only.</p>
+          <p data-os="linux"><b>Modded</b> moves everything back. Play then has Steam start the game with anti-cheat off, which UE4SS and the mods need. Offline and single player only.</p>
+          <p>Nothing is deleted. If a switch can't finish, everything is put back the way it was.</p></details>
+        <details><summary>Adding a mod</summary>
+          <p>Drop the mod's .zip or folder onto the window, or press <b>Add mods…</b> on the Mods page. The launcher puts each part where it belongs. Pak mods come as .utoc and .ucas files, or as a file ending in _P.pak (text, fonts and other files the game keeps in .pak files; these need Mod Loader 1.3.1). If a download holds several versions, it asks which one you want.</p>
+          <p>Skins made with ACE8 Skin Studio's skin slots are added in Skin Studio (Skin slots, Import), so they get a slot of their own.</p></details>
+        <details><summary>Load order</summary>
+          <p>When two mods change the same game file, only one can show: the one lower in the list. The Mods page tells you when two mods overlap and which one wins.</p></details>
+        <details><summary>A mod doesn't show up</summary>
+          <p>Check <b>Last game start</b> on the Play page after starting the game. Common reasons:</p>
+          <ul>
+            <li>Another mod lower in the list changes the same file.</li>
+            <li>The .ucas file is missing next to the .utoc.</li>
+            <li>The game was updated, and the Mod Loader needs an update for it.</li>
+            <li data-os="windows">The game was started with Steam's Play button. While Modded, always use the launcher's Play: Steam's turns anti-cheat on, which stops the mods.</li>
+            <li data-os="linux">Steam's launch options don't have the launcher's line, so the game started with anti-cheat on. See Settings, Starting the game.</li>
+          </ul></details>
+        <details data-os="windows"><summary>A switch says a program has a file open</summary>
+          <p>Close the game, Explorer windows showing the game's folders, editors (VS Code, Notepad++) and command windows, then switch again.</p></details>
+        <details data-os="linux"><summary>Linux and Steam Deck</summary>
+          <p>The game runs through Proton, so Steam has to start it. For Modded, Steam needs the launcher's line in the game's launch options (right-click <b>ACE COMBAT 8</b>, <b>Properties</b>, <b>General</b>, <b>Launch Options</b>). Settings, Starting the game, has the line, a Copy button, and <b>Set it for me</b>, which works while Steam is closed.</p>
+          <p>The line runs a small script each time Steam starts the game. While Modded it starts AceCombat8.exe with anti-cheat off and tells Proton to load UE4SS. While Unmodded it does nothing, so you can leave it in.</p>
+          <p>Steam Deck: switch between Modded and Unmodded in Desktop Mode, then play from Game Mode as usual. The launcher is in the app menu under Games, and you can add it to Steam as a non-Steam game.</p>
+          <p>Other launch options, such as <code>gamemoderun %command%</code> or <code>PROTON_LOG=1 %command%</code>, can stay. Put the launcher's line just before <code>%command%</code>.</p></details>
+        <details data-os="windows"><summary>Steam launch options, AC8_Offline.json, ac8noeac.bat</summary>
+          <p>Not needed. The launcher starts Modded without anti-cheat by itself.</p>
+          <p>Clear the launch options in Steam (right-click <b>ACE COMBAT 8</b>, <b>Properties</b>, <b>General</b>) so Steam's Play button and Unmodded start the game normally. AC8_Offline.json and ac8noeac.bat can stay; the launcher doesn't use them.</p></details>
+        <details><summary>Where things are</summary>
+          <p>Pak mods: <span class="path">Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod</span>. Script mods: <span class="path">ue4ss\Mods</span>. While Unmodded they are in the mod storage folder, under "Switched off". You can choose where that folder is in Settings.</p>
+          <p data-os="windows">The launcher's own settings: <span class="path">%LOCALAPPDATA%\ACE8 Mod Launcher</span>.</p>
+          <p data-os="linux">The launcher's own settings and the Steam launch script: <span class="path">~/.local/share/ace8-mod-launcher</span> (with Flatpak Steam: <span class="path">~/.var/app/com.valvesoftware.Steam/ace8-mod-launcher</span> for the script).</p></details>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div class="drop" id="drop" hidden><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5M4 16v4h16v-4"/></svg><p>Drop to add mods</p></div></div>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"><h2 id="dlgTitle"></h2><div id="dlgBody"></div><div class="row end" id="dlgButtons"></div></form></dialog>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

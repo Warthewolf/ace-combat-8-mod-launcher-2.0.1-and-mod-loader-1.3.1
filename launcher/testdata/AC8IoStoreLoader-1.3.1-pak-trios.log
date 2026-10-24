@@ -1,0 +1,73 @@
+AC8 mod loader 1.3.1
+mod root=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod
+mount signature matches=1 address=00000001427E4AA0
+pak constructor matches=1 address=00000001427F6C80
+Legacy Pak mount matches=1 address=0000000142800260
+signature requirement matches=1 branch=0000000141796B23
+new files: the game's package store code found at 0000000142800BAC
+Pak hook installed: only *_P.pak uses unsigned reader; must be installed before its constructor runs
+IoStore signature policy: native *_P.utoc and explicit mod plan share per-call bypass; stock checks retained
+hook installed, waiting for the game to mount pakchunk0-Windows.utoc
+stock mount code=0 order=0 path=../../../Game/Content/Paks/global.utoc
+Legacy Pak: captured native FPakPlatformFile=0000000014E8FE00 dispatcher=0000000012B4F590
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk20optional-Windows.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk20-Windows.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk10optional-Windows.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk10-Windows.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk0optional-Windows.utoc
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk0-Windows.utoc
+mods found=8 (loader folder 8, ~mods 0)
+~mods folder=(none)
+loadorder.txt=found
+  off  Guided TLS
+  on   Void_Wolf
+  on   Ladon_PlayableAircraft
+  on   F-22A_-Mobius_1-
+  on   Z_O_E_Skin
+  on   SurvivalMode
+  on   Strangereal_Jolly_Roger
+  on   zz_SkinStudio_SkinList
+new files: the game's package store was found; each mod is handed to it, so files new to the game load too
+mounting Legacy Pak [Void_Wolf] order=1000 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Void_Wolf\VoidWolf_roxxx_P.pak
+custom pak: signedMode=1 -> 0 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Void_Wolf\VoidWolf_roxxx_P.pak
+unsigned utoc scope: path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Void_Wolf\VoidWolf_roxxx_P.utoc
+stock mount code=0 order=1100 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Void_Wolf\VoidWolf_roxxx_P.utoc
+  package store: 5 packages, 0 import lists updated, 5 already matching, 0 not in the base game
+  Legacy result AL=1 pak-in-table=1 (paired UTOC registration is owned by the engine)
+mounting Legacy Pak [Ladon_PlayableAircraft] order=1001 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Ladon_PlayableAircraft\Ladon_PlayableAircraft_P.pak
+custom pak: signedMode=1 -> 0 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Ladon_PlayableAircraft\Ladon_PlayableAircraft_P.pak
+unsigned utoc scope: path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Ladon_PlayableAircraft\Ladon_PlayableAircraft_P.utoc
+stock mount code=0 order=1101 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Ladon_PlayableAircraft\Ladon_PlayableAircraft_P.utoc
+  package store: 67 packages, 1 import lists updated, 66 already matching, 0 not in the base game
+  package store: 1 lists needed more room (0 reuse an identical list already in memory, 1 got new memory)
+  Legacy result AL=1 pak-in-table=1 (paired UTOC registration is owned by the engine)
+mounting Legacy Pak [F-22A_-Mobius_1-] order=1002 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\F-22A_-Mobius_1-\F22AMobius1_ykptr_P.pak
+custom pak: signedMode=1 -> 0 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\F-22A_-Mobius_1-\F22AMobius1_ykptr_P.pak
+unsigned utoc scope: path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\F-22A_-Mobius_1-\F22AMobius1_ykptr_P.utoc
+stock mount code=0 order=1102 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\F-22A_-Mobius_1-\F22AMobius1_ykptr_P.utoc
+  package store: 3 packages, 0 import lists updated, 3 already matching, 0 not in the base game
+  Legacy result AL=1 pak-in-table=1 (paired UTOC registration is owned by the engine)
+mounting Legacy Pak [Z_O_E_Skin] order=1003 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Z_O_E_Skin\ZOESkin_uqbqn_P.pak
+custom pak: signedMode=1 -> 0 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Z_O_E_Skin\ZOESkin_uqbqn_P.pak
+unsigned utoc scope: path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Z_O_E_Skin\ZOESkin_uqbqn_P.utoc
+stock mount code=0 order=1103 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Z_O_E_Skin\ZOESkin_uqbqn_P.utoc
+  package store: 1 packages, 0 import lists updated, 1 already matching, 0 not in the base game
+  Legacy result AL=1 pak-in-table=1 (paired UTOC registration is owned by the engine)
+mounting [SurvivalMode] order=1004 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\SurvivalMode\SurvivalMode_P.utoc
+unsigned utoc scope: path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\SurvivalMode\SurvivalMode_P.utoc
+  result code=0 message=OK
+  package store: 14 packages, 0 import lists updated, 0 already matching, 14 not in the base game
+mounting Legacy Pak [Strangereal_Jolly_Roger] order=1005 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Strangereal_Jolly_Roger\StrangerealJollyRoger_cdkip_P.pak
+custom pak: signedMode=1 -> 0 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Strangereal_Jolly_Roger\StrangerealJollyRoger_cdkip_P.pak
+unsigned utoc scope: path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Strangereal_Jolly_Roger\StrangerealJollyRoger_cdkip_P.utoc
+stock mount code=0 order=1105 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\Strangereal_Jolly_Roger\StrangerealJollyRoger_cdkip_P.utoc
+  package store: 1 packages, 0 import lists updated, 1 already matching, 0 not in the base game
+  Legacy result AL=1 pak-in-table=1 (paired UTOC registration is owned by the engine)
+mounting Legacy Pak [zz_SkinStudio_SkinList] order=1006 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\zz_SkinStudio_SkinList\zz_SkinStudio_SkinList_P.pak
+custom pak: signedMode=1 -> 0 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\zz_SkinStudio_SkinList\zz_SkinStudio_SkinList_P.pak
+unsigned utoc scope: path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\zz_SkinStudio_SkinList\zz_SkinStudio_SkinList_P.utoc
+stock mount code=0 order=1106 path=E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\zz_SkinStudio_SkinList\zz_SkinStudio_SkinList_P.utoc
+  package store: 12 packages, 0 import lists updated, 12 already matching, 0 not in the base game
+  Legacy result AL=1 pak-in-table=1 (paired UTOC registration is owned by the engine)
+done: 7 of 7 attempted mount requests returned success (7 planned, 7 mod(s))
+new files: 1 explicit UTOC containers handed to the game's package store (1 UTOC successes this pass); Legacy sidecars are registered by the engine

@@ -1,0 +1,22 @@
+ACE8 Mod Launcher 2.0.1 and Mod Loader 1.3.1
+============================================
+
+MOST PLAYERS: USE THE ACE8 MOD LAUNCHER
+  Open the "ACE8 Mod Launcher 2.0.1" folder and start ACE8ModLauncher.exe.
+  It switches between Modded and Unmodded, manages your mods and starts
+  the game. If UE4SS and the Mod Loader aren't in the game yet, press
+  Install in the launcher: it takes them from the "War’s Mod Loader 1.3.1"
+  folder next to it. Or copy that folder's Game folder into the game
+  yourself (see below).
+
+INSTALLING BY HAND INSTEAD (WITHOUT THE LAUNCHER)
+  Use the "War’s Mod Loader 1.3.1" folder. Copy its Game folder into
+  ...\steamapps\common\ACE COMBAT 8\ and let Windows merge the folders.
+  The Mod Loader's README is in
+  Game\Binaries\Win64\ue4ss\Mods\IoStoreLoaderMod\README.txt.
+  Without the launcher, you need your own way to start the game with
+  anti-cheat off.
+
+Modded play is offline and single player only.
+
+Any issues please contact @voidcallsreaper on Discord.

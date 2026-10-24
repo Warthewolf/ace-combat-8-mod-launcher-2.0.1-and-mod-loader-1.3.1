@@ -1,0 +1,73 @@
+AC8 mod loader 1.3.1
+mod root=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan
+mount signature matches=1 address=00007FF7B4A91750
+pak constructor matches=1 address=00007FF7B4A916D0
+Legacy Pak mount matches=1 address=00007FF7B4A917B0
+signature requirement matches=1 branch=00007FF7B4A9204B
+new files: the game's package store code was found 0 times (expected once) - mods can replace game files but not add new ones
+Pak hook installed: only *_P.pak uses unsigned reader; must be installed before its constructor runs
+IoStore signature policy: native *_P.utoc and explicit mod plan share per-call bypass; stock checks retained
+hook installed, waiting for the game to mount pakchunk0-Windows.utoc
+custom pak: signedMode=1 -> 0 path=../../../Game/Content/Paks/~mods/ui_P.pak
+custom pak: signedMode=127 -> 0 path=C:\mods\UI_p.PAK
+custom pak: signedMode=0 -> 0 path=ui_P.pak
+stock mount code=0 order=3 path=../../../Game/Content/Paks/global.utoc
+custom pak: signedMode=1 -> 0 path=../PakPlanFixture_26476/Seen_P.pak
+Legacy Pak: captured native FPakPlatformFile=00007FF7B4A9E7C0 dispatcher=00007FF7B4A9E7C0
+stock mount code=0 order=3 path=../../../Game/Content/Paks/pakchunk0-Windows.utoc
+mods found=3 (loader folder 3, ~mods 0)
+~mods folder=(none)
+loadorder.txt=found
+  off  Off_26476_P.pak
+  on   Loose_26476_P.pak
+  on   PakPlanFixture_26476
+  skipped E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Missing_P.pak: its .ucas file is missing (Missing_P.ucas)
+new files: the game's package store code was not found - mods can replace game files but not add new ones
+mounting Legacy Pak [Loose_26476_P.pak] order=1000 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\Loose_26476_P.pak
+custom pak: signedMode=1 -> 0 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\Loose_26476_P.pak
+unsigned utoc scope: path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\Loose_26476_P.utoc
+stock mount code=0 order=1000 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\Loose_26476_P.utoc
+  Legacy result AL=1 pak-in-table=1 (paired UTOC registration is owned by the engine)
+mounting Legacy Pak [PakPlanFixture_26476] order=1001 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Broken_P.pak
+  Legacy result AL=0 pak-in-table=0 (paired UTOC registration is owned by the engine)
+mounting Legacy Pak [PakPlanFixture_26476] order=1002 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\fail_pair_P.pak
+custom pak: signedMode=1 -> 0 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\fail_pair_P.pak
+unsigned utoc scope: path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\fail_pair_P.utoc
+stock mount code=23 order=1002 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\fail_pair_P.utoc
+  Legacy result AL=0 pak-in-table=1 (paired UTOC registration is owned by the engine)
+mounting [PakPlanFixture_26476] order=1003 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\LooseToc.utoc
+unsigned utoc scope: path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\LooseToc.utoc
+  result code=0 message=
+  package store: mod container header not recognised - import lists not updated
+mounting Legacy Pak [PakPlanFixture_26476] order=1004 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Only_P.pak
+custom pak: signedMode=1 -> 0 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Only_P.pak
+  Legacy result AL=0 pak-in-table=1 (paired UTOC registration is owned by the engine)
+mounting Legacy Pak [PakPlanFixture_26476] order=1005 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Pair_P.pak
+custom pak: signedMode=1 -> 0 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Pair_P.pak
+unsigned utoc scope: path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Pair_P.utoc
+stock mount code=0 order=1005 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Pair_P.utoc
+  Legacy result AL=1 pak-in-table=1 (paired UTOC registration is owned by the engine)
+  skipped Pak E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Seen_P.pak: already present in the native mount table
+mounting Legacy Pak [PakPlanFixture_26476] order=1007 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Nested\Deep_P.pak
+custom pak: signedMode=1 -> 0 path=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan\PakPlanFixture_26476\Nested\Deep_P.pak
+  Legacy result AL=0 pak-in-table=1 (paired UTOC registration is owned by the engine)
+done: 3 of 7 attempted mount requests returned success (8 planned, 2 mod(s))
+Legacy Pak: 3 additional Pak(s) entered the native table but returned AL=0; pure Pak or sidecar failure, see individual results
+IoStore signature policy unavailable; mount not attempted path=~mods/unsigned_P.utoc
+stock mount code=-1 order=3 path=~mods/unsigned_P.utoc
+custom pak: signedMode=1 -> 0 path=second_P.pak
+unloaded, hook removed=yes
+Pak constructor hook removed=yes
+AC8 mod loader 1.3.1 (started again by UE4SS)
+mod root=E:\Mods\IoStoreLoaderMod\source\build\pak_windows_test\cases\pak-plan
+mount signature matches=1 address=00007FF7B4A91750
+pak constructor matches=1 address=00007FF7B4A916D0
+Legacy Pak mount matches=1 address=00007FF7B4A917B0
+signature requirement matches=1 branch=00007FF7B4A9204B
+new files: the game's package store code was found 0 times (expected once) - mods can replace game files but not add new ones
+Pak hook installed: only *_P.pak uses unsigned reader; must be installed before its constructor runs
+IoStore signature policy: native *_P.utoc and explicit mod plan share per-call bypass; stock checks retained
+hook installed again; the mods were already mounted in this game session
+custom pak: signedMode=1 -> 0 path=restart_P.pak
+unloaded, hook removed=yes
+Pak constructor hook removed=yes

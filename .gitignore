@@ -1,0 +1,5 @@
+dist/
+*.exe
+/launcher/ace8modlauncher
+/launcher/ACE8ModLauncher
+mod-loader/IoStoreLoaderMod/source/build/

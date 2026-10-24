@@ -1,0 +1,89 @@
+AC8 Mod Loader - changes
+========================
+
+1.3.1  release package (2026-10-18)
+  - Tested in the game: *_P.pak mods load and show.
+  - dlls\main.dll is the 1.3.1 build. Test build files are not included.
+  - Works with ACE8 Mod Launcher, which lists .pak mods and keeps their
+    loadorder.txt lines.
+
+1.3.1  (2026-10-18)
+  - Correct FPakFile.Filename from +0x10 to +0x18, confirmed in live AC8.
+    The old offset rejected the native object and blocked active Pak loading.
+  - Correct the Windows fixture layout; all 12 scenarios pass again.
+  - In x64dbg, an equivalent memory fix allowed both installed custom Pak
+    groups to return AL=1, enter the native table, and mount UTOC with code=0.
+
+1.3.0  (2026-10-18)
+  - Discover and actively mount *_P.pak in the loader folder, mod subfolders,
+    and Paks\~mods using the game's Legacy Pak mount interface.
+  - Treat same-directory Pak/UTOC/UCAS files as one unit. The engine mounts
+    and registers the sidecar; the loader does not repeat that work.
+  - Apply loadorder.txt and duplicate selection to Pak entries; skip Paks
+    already in the native mount table.
+  - Capture the real FPakPlatformFile from a verified native IoStore call.
+    Defer Pak requests until it is available; retain direct UTOC loading.
+  - Preserve the actual return code and report native-table insertion
+    separately, including AL=0 with an inserted Pak.
+  - Windows fixture tests pass in 12 scenarios. In-game validation pending.
+  - Output is source\build\main.dll; dlls\main.dll remains the original sample.
+
+1.2.1  (2026-10-18)
+  - Native *_P.utoc and explicit mod mounts share one scoped IoStore signature
+    policy, including nested calls and serialized access through the hook.
+
+1.2.0  (2026-10-18)
+  - Hook the Legacy Pak constructor: only *_P.pak uses signedMode=0.
+  - Add the Windows build script and isolated hook test host.
+
+1.1.0  package update (2026-10-15)
+  - ModLauncher.bat and ModLauncher.ps1 are no longer included. ACE8 Mod
+    Launcher does their job (mods on and off, load order, last game start)
+    without a PowerShell script.
+  - EasyAntiCheat\AC8_Offline.json and the Steam launch options it went
+    with are no longer used: ACE8 Mod Launcher starts the game without
+    anti-cheat by itself.
+  - The loader itself (dlls\main.dll) is unchanged.
+
+1.1.0  (2026-10-12)
+  New files.
+  - Every mod container is now also handed to the game's package store,
+    exactly the way the game hands over its own containers (same lock,
+    same list, the game's own sort). Before, the store only knew the
+    game's own files: a mod could replace them, but a file that is new to
+    the game (a new skin's material, texture or icon) was never found.
+  - The log says whether this worked ("new files: ...") and why not if it
+    did not. When it is not possible, everything else works as in 1.0.0.
+  - Everything from 1.0.0 is unchanged, including the package store sync
+    for replaced files.
+
+1.0.0  (2026-10-12)
+  One version for every mod.
+  - The package store fix from 0.3.x is now part of the source instead of a
+    patch on the DLL, so rebuilding no longer loses it. Mods that change what
+    a file depends on (new weapons or parts on an aircraft) need it.
+  - Mods are found inside extra folders (up to 5 levels deep), so a zip
+    unpacked into one folder too many still loads.
+  - A .utoc put straight into IoStoreLoaderMod loads too.
+  - The game's Content\Paks\~mods folder is loaded as well.
+  - Folders named backup(s), old, disabled, build, packed, export, source,
+    dlls and Scripts are never loaded.
+  - The same file name in two places loads once (the newest copy). A file the
+    game already loaded itself is not loaded again.
+  - A .utoc without its .ucas is skipped and named in the log.
+  - enabled.txt is included, so UE4SS starts the loader without a mods.txt
+    line.
+  - loadorder.txt is optional; names that no longer exist are ignored.
+  - If UE4SS starts the loader after the game has loaded pakchunk0, the mods
+    are loaded a moment later instead of not at all.
+  - If another copy of a loader is already active, this copy does nothing and
+    the log names the other one.
+  - Safe when UE4SS starts the mod twice or restarts it.
+  - Mod Launcher: shows mods in ~mods, where each mod is, problems with its
+    files, how the last game start went, and finds AceCombat8.exe by itself.
+    "ModLauncher.ps1 -List" prints what will load without opening a window.
+
+0.3.1  Patch on the 0.2.0 DLL: import lists that need more room.
+0.3.0  Patch on the 0.2.0 DLL: package store sync (import lists).
+0.2.0  Every mod folder instead of one; loadorder.txt and the Mod Launcher.
+0.1.0  The original single-mod IoStoreLoaderMod DLL.
