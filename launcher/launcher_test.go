@@ -1498,3 +1498,30 @@ func TestPakTrioLog131(t *testing.T) {
 		}
 	}
 }
+
+// UE4SS starts the script mods; its log says which ones
+func TestScriptRunLog(t *testing.T) {
+	b, err := os.ReadFile("testdata/UE4SS-3.0.1.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sr := parseScriptRun(decodeText(b))
+	if sr == nil || !sr.Started["ac8stonehenge"] || !sr.Started["iostoreloadermod"] || len(sr.Started) != 2 || len(sr.Problems) != 0 {
+		t.Fatalf("%+v", sr)
+	}
+	sr = parseScriptRun("[x] Starting mods (from mods.txt load order)...\n[x] Starting Lua mod 'SkyLive'\n[x] Starting C++ mod 'RoGLaser'\n" +
+		"[x] [Lua] [SkyLive] error: main.lua:3: attempt to index a nil value\n")
+	if sr == nil || !sr.Started["skylive"] || !sr.Started["roglaser"] || len(sr.Problems) != 1 || !strings.HasPrefix(sr.Problems[0], "[Lua]") {
+		t.Fatalf("%+v", sr)
+	}
+	if parseScriptRun("[x] Console created\n") != nil {
+		t.Fatal("a log without started mods should say nothing")
+	}
+	// in the state, from the game's ue4ss folder
+	g := newGame(t)
+	installModding(t, g)
+	write(t, join(g.ue4ssRoot(), "UE4SS.log"), string(b))
+	if st := buildState(); st.ScriptRun == nil || !st.ScriptRun.Started["ac8stonehenge"] {
+		t.Fatalf("%+v", st.ScriptRun)
+	}
+}

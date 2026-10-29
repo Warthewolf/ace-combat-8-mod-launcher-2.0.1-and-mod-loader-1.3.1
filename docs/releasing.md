@@ -6,9 +6,9 @@ The version is in five places; change them together:
 
 | File | What to change |
 |---|---|
-| `launcher/main.go` | `appVersion = "2.0.1"` |
-| `launcher/winres/app.rc` | `FILEVERSION 2,0,1,0`, `PRODUCTVERSION 2,0,1,0`, `"FileVersion"`, `"ProductVersion"` |
-| `launcher/winres/app.manifest` | `version="2.0.1.0"` |
+| `launcher/main.go` | `appVersion = "2.0.2"` |
+| `launcher/winres/app.rc` | `FILEVERSION 2,0,2,0`, `PRODUCTVERSION 2,0,2,0`, `"FileVersion"`, `"ProductVersion"` |
+| `launcher/winres/app.manifest` | `version="2.0.2.0"` |
 | `launcher/package/*.txt` | The title line of each README and READ ME FIRST |
 | `launcher/package/CHANGELOG.txt` | A new section at the top |
 

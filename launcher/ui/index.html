@@ -82,7 +82,7 @@ try { var th = localStorage.getItem('ace8-theme'); if (th === 'light' || th === 
           <div id="todo" class="todo"></div>
 
           <section class="lastrun" id="lastRun" hidden aria-labelledby="h-last">
-            <div class="sec-head"><h2 id="h-last">Last game start</h2><button class="link" id="btnShowLog">Mod Loader log</button></div>
+            <div class="sec-head"><h2 id="h-last">Last game start</h2><span class="row"><button class="link" id="btnShowLog">Mod Loader log</button><button class="link" id="btnShowUe4ssLog">UE4SS log</button></span></div>
             <p id="lastSummary" class="fine"></p>
             <ul id="lastMods" class="lastmods"></ul>
           </section>
@@ -181,6 +181,7 @@ try { var th = localStorage.getItem('ace8-theme'); if (th === 'light' || th === 
           <div class="row">
             <button class="btn" id="btnReport">Copy support report</button>
             <button class="btn ghost" id="btnShowLog2">Mod Loader log</button>
+            <button class="btn ghost" id="btnShowUe4ssLog2">UE4SS log</button>
             <button class="btn ghost" id="btnLauncherLog">Launcher log</button>
           </div>
         </section>

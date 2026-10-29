@@ -23,6 +23,8 @@ your user name left out.
 | "Game version not supported" | The game was updated: see [After a game update](game-updates.md) |
 | "Two mod loaders installed" | Delete the other loader's folder under `ue4ss\Mods` |
 | Every pak mod Not loaded with Mod Loader 1.3.1 | Your launcher is older than 2.0.1: update it |
+| A script mod: Not started | Check its folder has `Scripts\main.lua` (Lua) or `dlls\main.dll` (C++) and that it's switched on; open **UE4SS log** |
+| UE4SS: `[Lua] … error …` | The script mod has a bug or needs a newer UE4SS; tell its author |
 
 Also: on Windows, a Modded game started with **Steam's** Play button has anti-cheat
 on and no mods. Use the launcher's Play.
@@ -30,7 +32,7 @@ on and no mods. Use the launcher's Play.
 ## What the Mod Loader's log lines mean
 
 `ue4ss\Mods\IoStoreLoaderMod\AC8IoStoreLoader.log` is written each time the game
-starts while Modded.
+starts while Modded. It covers pak mods only; script mods are in `ue4ss\UE4SS.log`.
 
 | Line | Meaning |
 |---|---|

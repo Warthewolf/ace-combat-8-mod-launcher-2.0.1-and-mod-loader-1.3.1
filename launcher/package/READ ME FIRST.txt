@@ -1,8 +1,8 @@
-ACE8 Mod Launcher 2.0.1 and Mod Loader 1.3.1
+ACE8 Mod Launcher 2.0.2 and Mod Loader 1.3.1
 ============================================
 
 MOST PLAYERS: USE THE ACE8 MOD LAUNCHER
-  Open the "ACE8 Mod Launcher 2.0.1" folder and start ACE8ModLauncher.exe.
+  Open the "ACE8 Mod Launcher 2.0.2" folder and start ACE8ModLauncher.exe.
   It switches between Modded and Unmodded, manages your mods and starts
   the game. If UE4SS and the Mod Loader aren't in the game yet, press
   Install in the launcher: it takes them from the "War’s Mod Loader 1.3.1"

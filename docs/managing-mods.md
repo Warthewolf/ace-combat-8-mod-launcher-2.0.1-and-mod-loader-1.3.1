@@ -74,6 +74,12 @@ removed mod has a small `removed.json` describing where it came from.
 
 ## Last game start
 
-After a Modded start, the Play page shows **Last game start**: each mod switched
-on, marked **Loaded**, **Not loaded** (with the reason) or **Failed**, read from
-the Mod Loader's log. **Mod Loader log** shows the whole log.
+After a Modded start, the Play page shows **Last game start**:
+
+- each pak mod switched on, marked **Loaded**, **Not loaded** (with the reason)
+  or **Failed**, read from the Mod Loader's log (`AC8IoStoreLoader.log`);
+- each script mod switched on, marked **Started** or **Not started**, read from
+  UE4SS's log (`ue4ss\UE4SS.log`), plus any Lua errors UE4SS reported.
+
+**Mod Loader log** and **UE4SS log** show the whole logs. The Mod Loader only
+handles pak mods; script mods are started by UE4SS.

@@ -151,7 +151,7 @@ function renderHud() {
     cell('Mods on', on + ' pak' + (sc ? ' + ' + sc + ' script' : ''), '', 'mods');
     if (s.run && m === 'modded') {
       const r = s.run;
-      const short = { ok: [r.mounted + ' of ' + r.total + ' loaded', 'good'], problems: [r.mounted + ' of ' + r.total + ' loaded', 'warn'], unsupported: ['Game version not supported', 'bad'], otherloader: ['Two mod loaders', 'bad'], nothing: ['No mods on', ''], waiting: ['Did not finish', 'warn'] }[r.state] || ['', ''];
+      const short = { ok: [r.mounted + ' of ' + r.total + ' loaded', 'good'], problems: [r.mounted + ' of ' + r.total + ' loaded', 'warn'], unsupported: ['Game version not supported', 'bad'], otherloader: ['Two mod loaders', 'bad'], nothing: [s.scriptMods.some(x => x.enabled) ? 'No pak mods on' : 'No mods on', ''], waiting: ['Did not finish', 'warn'] }[r.state] || ['', ''];
       cell('Last game start', short[0], short[1], 'last', fmtWhen(r.when));
     }
   }
@@ -277,17 +277,31 @@ function renderTodo() {
 }
 
 function renderLastRun() {
-  const s = STATE, r = s.run, box = $('#lastRun');
-  box.hidden = !r || currentMode() !== 'modded';
-  if (!r) return;
-  $('#lastSummary').textContent = (fmtWhen(r.when) ? 'Started ' + fmtWhen(r.when) + '. ' : '') + r.summary;
+  const s = STATE, r = s.run, sr = s.scriptRun, box = $('#lastRun');
+  box.hidden = !(r || sr) || currentMode() !== 'modded';
+  if (!(r || sr)) return;
+  const when = r ? r.when : sr.when;
+  const scriptsOn = s.scriptMods.filter(x => x.enabled);
+  let summary = r ? r.summary : 'The Mod Loader wrote no log.';
+  if (sr && scriptsOn.length) {
+    const started = scriptsOn.filter(x => sr.started[x.name.toLowerCase()]).length;
+    summary += ` UE4SS started ${started} of ${plural(scriptsOn.length, 'script mod')}.`;
+  }
+  $('#lastSummary').textContent = (fmtWhen(when) ? 'Started ' + fmtWhen(when) + '. ' : '') + summary;
   const rows = [];
-  for (const m of s.pakMods) {
+  for (const m of r ? s.pakMods : []) {
     if (!m.enabled) continue;
     const lr = m.lastRun;
     if (lr && lr.failed) rows.push(`<li><span class="st no">Failed</span><span>${esc(m.key)} <span class="msg">${esc(lr.messages.join(' '))}</span></span></li>`);
     else if (lr && lr.loaded) rows.push(`<li><span class="st ok">Loaded</span><span>${esc(m.key)}</span></li>`);
     else rows.push(`<li><span class="st off">Not loaded</span><span>${esc(m.key)} <span class="msg">${new Date(m.mtime) > new Date(r.when) ? 'Added after that start.' : (m.notes.find(n => n.kind === 'warn') || {}).text || ''}</span></span></li>`);
+  }
+  if (sr) {
+    for (const m of scriptsOn) {
+      if (sr.started[m.name.toLowerCase()]) rows.push(`<li><span class="st ok">Started</span><span>${esc(m.name)} <span class="msg">Script mod</span></span></li>`);
+      else rows.push(`<li><span class="st off">Not started</span><span>${esc(m.name)} <span class="msg">${new Date(m.mtime || 0) > new Date(sr.when) ? 'Added after that start.' : 'UE4SS did not start this script mod. It needs Scripts\\main.lua or dlls\\main.dll inside its folder.'}</span></span></li>`);
+    }
+    for (const p of sr.problems || []) rows.push(`<li><span class="st no">UE4SS</span><span><span class="msg">${esc(p)}</span></span></li>`);
   }
   $('#lastMods').innerHTML = rows.join('');
 }
@@ -430,6 +444,11 @@ async function doSetup() {
 
 $('#btnWelcome').onclick = () => { $('#welcome').hidden = true; saveSetting({ welcomeDone: true }); };
 $('#btnShowLog').onclick = $('#btnShowLog2').onclick = showLoaderLog;
+$('#btnShowUe4ssLog').onclick = $('#btnShowUe4ssLog2').onclick = async () => {
+  const r = await api('ue4ss-log');
+  dialog({ title: 'UE4SS log', wide: true, html: r.text ? `<p class="fine">UE4SS starts the script mods; this is its log from the last game start (the last 400 lines).</p><pre>${esc(r.text)}</pre>` : '<p>There is no UE4SS log yet. UE4SS writes it each time the game starts while Modded.</p>',
+    buttons: [{ label: 'Close', value: 'close', kind: 'primary' }] });
+};
 async function showLoaderLog() {
   const r = await api('loader-log');
   dialog({ title: 'Mod Loader log', wide: true, html: r.text ? `<pre>${esc(r.text)}</pre>` : '<p>There is no log yet. The Mod Loader writes it each time the game starts while Modded.</p>',

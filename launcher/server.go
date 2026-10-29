@@ -383,6 +383,15 @@ func newMux(port int) http.Handler {
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "text": decodeText(b)})
 	})
+	api("ue4ss-log", func(w http.ResponseWriter, r *http.Request) {
+		g, _ := currentGame()
+		b, err := os.ReadFile(join(g.ue4ssRoot(), "UE4SS.log"))
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"ok": true, "text": ""})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "text": tail(decodeText(b), 400)})
+	})
 	api("report", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "text": supportReport()})
 	})
@@ -435,6 +444,7 @@ type State struct {
 	ScriptMods   []*ScriptMod `json:"scriptMods"`
 	Removed      []RemovedMod `json:"removed"`
 	Run          *RunInfo     `json:"run"`
+	ScriptRun    *ScriptRun   `json:"scriptRun,omitempty"`
 	SteamOptions []string     `json:"steamOptions"`
 	SteamOffline bool         `json:"steamOffline"`
 	Status       Status       `json:"status"`
@@ -515,6 +525,7 @@ func buildState() State {
 	s.Mode = g.modeInfo()
 	s.Setup = g.setupStatus()
 	s.Run = readRunInfo(g.loaderDir())
+	s.ScriptRun = readScriptRun(g.ue4ssRoot())
 	s.PakMods, s.StaleOrder = scanPakMods(g.loaderDir(), g.tildeModsDir())
 	if skinListNotLast(s.PakMods) && busy.Try("tidying the load order") {
 		// Skin Studio's skin list has to load after the skins; put it back at the end.
@@ -754,6 +765,10 @@ func supportReport() string {
 		if lb, err := os.ReadFile(join(g.loaderDir(), "AC8IoStoreLoader.log")); err == nil {
 			b.WriteString("\n---- AC8IoStoreLoader.log ----\n")
 			b.WriteString(tail(decodeText(lb), 120))
+		}
+		if lb, err := os.ReadFile(join(g.ue4ssRoot(), "UE4SS.log")); err == nil {
+			b.WriteString("\n---- UE4SS.log (last lines) ----\n")
+			b.WriteString(tail(decodeText(lb), 60))
 		}
 	}
 	if lb, err := os.ReadFile(join(dataDir, "launcher.log")); err == nil {

@@ -74,7 +74,7 @@ func parseRunLog(text string) *RunInfo {
 			sawHook = true
 		case strings.HasPrefix(line, "nothing to mount"):
 			ri.State = "nothing"
-			ri.Summary = "No mods were switched on, so nothing was loaded."
+			ri.Summary = "No pak mods were switched on, so the Mod Loader had nothing to load."
 			sawDone = true
 		}
 		if m := reMounting.FindStringSubmatch(line); m != nil {

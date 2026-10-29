@@ -1,0 +1,55 @@
+[2026-10-18 13:13:05.0237796] Console created
+[2026-10-18 13:13:05.0238429] UE4SS - v3.0.1 Beta #0 - Git SHA #e3ba1016
+[2026-10-18 13:13:05.0238507] Timezone: UTC (local disabled due to wine)
+[2026-10-18 13:13:05.0238564] UE4SS Build Configuration: Game__Shipping__Win64 (MSVC)
+[2026-10-18 13:13:05.0260715] Setting up mods...
+[2026-10-18 13:13:05.0260990] Loading mods from: E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods
+[2026-10-18 13:13:05.0280020] Starting mods (from enabled.txt (E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods), no defined load order)...
+[2026-10-18 13:13:05.0281552] Mod 'AC8Stonehenge' has enabled.txt, starting mod.
+[2026-10-18 13:13:05.0310643] Mod 'IoStoreLoaderMod' has enabled.txt, starting mod.
+[2026-10-18 13:13:06.0936064] No specific game configuration found, using default configuration file
+[2026-10-18 13:13:06.0936230] Config: E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\UE4SS-settings.ini
+
+[2026-10-18 13:13:06.0936298] root directory: E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss
+[2026-10-18 13:13:06.0936349] working directory: E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss
+[2026-10-18 13:13:06.0936398] game executable directory: E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64
+[2026-10-18 13:13:06.0936721] game executable: E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\AceCombat8.exe (555102832 bytes)
+
+
+[2026-10-18 13:13:06.0936776] mods directories: 
+[2026-10-18 13:13:06.0936829] [0] E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss\Mods
+[2026-10-18 13:13:06.0936884] 
+[2026-10-18 13:13:06.0936947] log directory: E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss
+[2026-10-18 13:13:06.0937007] object dumper directory: E:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\ue4ss
+
+
+[2026-10-18 13:13:06.0971108] PS Scan attempt 1 (Phase 2)
+[2026-10-18 13:13:06.0971238] [PS] Reading image
+[2026-10-18 13:13:06.0971970] [PS] Starting scan
+[2026-10-18 13:13:06.9674041] [PS] Scan finished in 870.186ms
+[2026-10-18 13:13:06.9674250] [PS] Found EngineVersion: 5.4
+[2026-10-18 13:13:06.9674306] [PS] Found BuildConfiguration: Shipping
+[2026-10-18 13:13:06.9674351] [PS] Found Stats: Off
+[2026-10-18 13:13:06.9674397] [PS] Found GUObjectArray: 0x14dc60cd0
+[2026-10-18 13:13:06.9674441] [PS] Found GMalloc: 0x14e426090
+[2026-10-18 13:13:06.9674484] [PS] Found FName::ToString: 0x14186f950
+[2026-10-18 13:13:06.9674527] [PS] Found FName::FName(wchar_t*): 0x14186f190
+[2026-10-18 13:13:06.9674570] [PS] Found StaticConstructObject_Internal: 0x141abd340
+[2026-10-18 13:13:06.9674623] [PS] Failed to find FUObjectHashTables::Get(): FUObjectHashTablesGet: expected at least one value
+[2026-10-18 13:13:06.9674668] [PS] You can supply your own AOB in 'UE4SS_Signatures/GUObjectHashTables.lua'
+[2026-10-18 13:13:06.9674715] [PS] Found GNatives: 0x14e24de40
+[2026-10-18 13:13:06.9674763] [PS] Failed to find ConsoleManagerSingleton: ConsoleManagerSingleton: found 2 unique values [1416FDB00, 148C21760]
+[2026-10-18 13:13:06.9674810] [PS] You can supply your own AOB in 'UE4SS_Signatures/ConsoleManager.lua'
+[2026-10-18 13:13:06.9674854] [PS] Found GameEngineTick: 0x144430690
+[2026-10-18 13:13:06.9674902] PS scan successful
+[2026-10-18 13:13:06.9674943] Build configuration: shipping, detected
+[2026-10-18 13:13:06.9674983] Stats: off, detected
+[2026-10-18 13:13:06.9681266] Running second pass of Lua override scans
+[2026-10-18 13:13:06.9681404] Lua Scan attempt 1 (Phase 2)
+[2026-10-18 13:13:06.9681492] Phase 2: Verifying FName constructor...
+[2026-10-18 13:13:06.9734620] [UE4SS.FNameConstructor.FNameConstructorVerificationHook] Added posthook with Id '0X8000200000000001'!
+[2026-10-18 13:13:06.9942252] FName constructor verified at 0x000000014186F190
+[2026-10-18 13:13:06.9942375] Using engine version: 5.4
+[2026-10-18 13:13:06.9942434] Waiting for object construction...
+[2026-10-18 13:13:09.0166714] Still waiting for object construction, 9471 objects constructed so far
+[2026-10-18 13:13:11.0390221] Still waiting for object construction, 9471 objects constructed so far
