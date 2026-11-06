@@ -211,7 +211,7 @@ type PakMod struct {
 	Skin       *SkinInfo    `json:"skin,omitempty"`
 	SkinList   bool         `json:"skinList"`
 	LastRun    *ModRun      `json:"lastRun,omitempty"`
-	Loads      int          `json:"loads"` // containers the loader will mount next start
+	Loads      int          `json:"loads"`             // containers the loader will mount next start
 	Added      *time.Time   `json:"added,omitempty"`   // added through the launcher
 	Updated    *time.Time   `json:"updated,omitempty"` // last updated through the launcher
 }
