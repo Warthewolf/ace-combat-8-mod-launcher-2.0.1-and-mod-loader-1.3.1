@@ -1,4 +1,4 @@
-ACE8 Mod Launcher 2.0.2
+ACE8 Mod Launcher 2.0.3
 =======================
 
 One window for modding Ace Combat 8: switch between Modded and Unmodded,

@@ -30,6 +30,20 @@ Good to know:
 - A plain `.pak` whose name doesn't end in `_P.pak` is not loaded by the Mod
   Loader; the launcher says so.
 
+## Updating a mod
+
+Add the newer version the same way. The old copy goes to **Removed mods** first,
+so you can always go back.
+
+- **Pak mods** are replaced as a whole, so no old file can load next to the new one.
+- **Script mods** keep everything you or other mods added: files the new version
+  doesn't have (settings saved while playing, add-ons other mods put in its
+  folder) are copied over from the old copy. A mod can also name files where your
+  copy wins (see [For mod makers](mod-makers.md#ace8-keeptxt-files-the-players-copy-keeps)).
+- **UE4SS's shared folder** (`ue4ss\Mods\shared`) is updated file by file; files
+  it replaces are backed up as "Replaced shared files" in Removed mods.
+- A script mod you had switched off stays off.
+
 ## Load order
 
 Pak mods are listed in load order: **lower in the list loads later and wins**

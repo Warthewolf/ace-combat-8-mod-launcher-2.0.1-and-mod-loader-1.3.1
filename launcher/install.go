@@ -507,7 +507,12 @@ func (g Game) planAdd(source string, files []incoming, at addPlaces) ([]*unit, A
 			}
 			name := rest[0]
 			if strings.EqualFold(name, "shared") {
-				note("The download's copy of UE4SS's shared files was not used; yours were kept.")
+				// UE4SS's shared Lua libraries: added file by file, never replaced as a whole
+				if len(rest) > 1 {
+					u := get("shared", "shared", "shared", join(ue, "Mods", "shared"))
+					u.isFiles = true
+					u.files[strings.Join(rest[1:], "/")] = f
+				}
 				continue
 			}
 			u := get("script:"+strings.ToLower(name), "script", name, join(ue, "Mods", name))
@@ -739,6 +744,22 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 		if err := stageUnit(u, tmp); err != nil {
 			return res, fmt.Errorf("%s could not be added: %v", u.name, err)
 		}
+		if u.kind == "shared" {
+			sr, err := g.commitShared(u, tmp, source)
+			if err != nil {
+				return res, fmt.Errorf("UE4SS's shared files could not be updated: %s Nothing was changed in the shared folder.", explainMoveError(err))
+			}
+			switch {
+			case sr.Replaced > 0:
+				res.Updated = append(res.Updated, fmt.Sprintf("UE4SS shared files (%s replaced, %s added; the previous ones are in Removed mods)", plural(sr.Replaced, "file"), strconv.Itoa(sr.Added)))
+			case sr.Added > 0:
+				res.Added = append(res.Added, "UE4SS shared files ("+plural(sr.Added, "file")+")")
+			}
+			if len(sr.KeptStock) > 0 {
+				res.Notes = append(res.Notes, "UE4SS's own shared files were kept as they are: "+strings.Join(sr.KeptStock, ", ")+".")
+			}
+			continue
+		}
 		// 2. Move older copies out of the way, into Removed mods.
 		var putBack []string
 		undo := func() {
@@ -775,7 +796,7 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 				}
 			}
 		}
-		updated, wasOff := false, false
+		updated, wasOff, oldCopy := false, false, ""
 		if u.isFiles {
 			// loose files in ~mods or LogicMods: a file with the same name is an older copy
 			for rel := range u.files {
@@ -804,11 +825,29 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 			}
 			putBack = append(putBack, d)
 			updated = true
+			if u.kind == "script" {
+				oldCopy = join(d, filepath.Base(u.target))
+			}
 		}
 		// 3. Move the new copy in. If that fails, the older copies go back.
 		if err := commitUnit(u, tmp); err != nil {
 			undo()
 			return res, fmt.Errorf("%s could not be added: %s Nothing was changed for this mod.", u.name, explainMoveError(err))
+		}
+		if oldCopy != "" {
+			// keep what the player and other mods added to the old copy (it stays
+			// complete in Removed mods as well)
+			carried, kept, err := carryOver(oldCopy, u.target)
+			if carried > 0 || kept > 0 {
+				res.Notes = append(res.Notes, fmt.Sprintf("%s: kept %s from your old copy (settings and add-ons the download doesn't have).", u.name, plural(carried+kept, "file")))
+			}
+			if err != nil {
+				logf("carrying files over to %s: %v", u.target, err)
+				res.Notes = append(res.Notes, u.name+": some of your files from the old copy could not be kept ("+err.Error()+"). The old copy is complete in Removed mods.")
+			}
+			if wasOff {
+				os.Remove(join(u.target, "enabled.txt")) // carried over as enabled.off; switched below
+			}
 		}
 		if u.kind == "script" {
 			if !isFile(join(u.target, "enabled.txt")) && !isFile(join(u.target, "enabled.off")) {
@@ -1105,6 +1144,13 @@ func (g Game) restoreRemoved(id string) error {
 	}
 	if ri.Kind == "modloader" {
 		return errors.New("an old Mod Loader is kept only as a backup; copy its main.dll by hand if you really need it")
+	}
+	if ri.Kind == "shared" {
+		if err := g.restoreShared(dir, ri); err != nil {
+			return err
+		}
+		logf("restored %s", ri.Name)
+		return nil
 	}
 	from := g.relocate(ri.From)
 	if len(ri.Files) > 0 {

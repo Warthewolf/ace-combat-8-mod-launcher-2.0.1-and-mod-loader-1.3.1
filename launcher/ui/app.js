@@ -633,7 +633,7 @@ function scriptRow(sm) {
 
 function removedRow(r) {
   const li = el(`<li class="item"></li>`);
-  const kind = { pak: 'Pak mod', tilde: '~mods', script: 'Script mod', logic: 'LogicMods', modloader: 'Old Mod Loader' }[r.kind] || 'Mod';
+  const kind = { pak: 'Pak mod', tilde: '~mods', script: 'Script mod', logic: 'LogicMods', modloader: 'Old Mod Loader', shared: 'Replaced shared files' }[r.kind] || 'Mod';
   li.appendChild(el(`<div class="main-col"><div class="name">${esc(r.name.replace(/^~mods\\/, ''))}</div><div class="meta"><span class="tag">${esc(kind)}</span><span>${fmtSize(r.size)}</span><span>Removed ${esc(fmtWhen(r.removed))}</span></div></div>`));
   const actions = el('<div class="actions"></div>');
   if (r.kind !== 'modloader') {

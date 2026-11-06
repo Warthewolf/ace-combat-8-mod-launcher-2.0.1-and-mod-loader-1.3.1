@@ -1,6 +1,19 @@
 ACE8 Mod Launcher - changelog
 =============================
 
+2.0.3 (2026-11-07)
+------------------
+- Updating a script mod keeps what you and other mods added to it: files the
+  new version doesn't have (settings saved while playing, other mods' add-ons
+  in its folder) are copied over from the old copy. The old copy is still
+  kept complete in Removed mods.
+- Mods can ship an ace8-keep.txt naming files where the player's copy wins
+  over the download's (for example a settings file with defaults).
+- UE4SS's shared folder (ue4ss\Mods\shared) in a download is now installed,
+  file by file: new files are added, changed files replace the old ones
+  (backed up in Removed mods, and restorable), and UE4SS's own shared files
+  are never overwritten. Before, it was skipped.
+
 2.0.2 (2026-10-29)
 ------------------
 - "Last game start" also shows the script mods: which ones UE4SS started,

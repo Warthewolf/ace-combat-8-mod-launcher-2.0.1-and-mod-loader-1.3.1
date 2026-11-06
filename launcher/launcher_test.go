@@ -1525,3 +1525,163 @@ func TestScriptRunLog(t *testing.T) {
 		t.Fatalf("%+v", st.ScriptRun)
 	}
 }
+
+func readS(t *testing.T, p string) string {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("%s: %v", p, err)
+	}
+	return string(b)
+}
+
+// Updating a script mod keeps what the player and other mods added to it
+// (Simple Mod Settings add-ons, settings written at runtime), and the files the
+// mod's ace8-keep.txt names.
+func TestUpdateScriptModKeepsPlayerFiles(t *testing.T) {
+	g := newGame(t)
+	installModding(t, g)
+	src := join(t.TempDir(), "SimpleModSettings")
+	write(t, join(src, "Scripts", "main.lua"), "v1")
+	write(t, join(src, "config", "defaults.json"), "defaults v1")
+	write(t, join(src, "config", "user.json"), "shipped user v1")
+	if _, err := addFromPaths(g, []string{src}, nil); err != nil {
+		t.Fatal(err)
+	}
+	mod := join(g.ue4ssRoot(), "Mods", "SimpleModSettings")
+	// while playing: the mod saves settings, another mod drops its add-on in
+	write(t, join(mod, "config", "user.json"), "the player's settings")
+	write(t, join(mod, "settings", "saved.json"), "runtime settings")
+	write(t, join(mod, "addons", "OtherMod", "menu.lua"), "another mod's file")
+
+	// v2: new code, new defaults, a new user.json the player's copy should win over
+	write(t, join(src, "Scripts", "main.lua"), "v2")
+	write(t, join(src, "Scripts", "extra.lua"), "new in v2")
+	write(t, join(src, "config", "defaults.json"), "defaults v2")
+	write(t, join(src, "config", "user.json"), "shipped user v2")
+	write(t, join(src, keepListName), "# keep the player's settings\nconfig/user.json\nsaves/\n")
+	res, err := addFromPaths(g, []string{src}, nil)
+	if err != nil || len(res.Updated) != 1 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	for p, want := range map[string]string{
+		"Scripts/main.lua":         "v2",
+		"Scripts/extra.lua":        "new in v2",
+		"config/defaults.json":     "defaults v2",
+		"config/user.json":         "the player's settings",
+		"settings/saved.json":      "runtime settings",
+		"addons/OtherMod/menu.lua": "another mod's file",
+	} {
+		if got := readS(t, join(mod, filepath.FromSlash(p))); got != want {
+			t.Errorf("%s = %q, want %q", p, got, want)
+		}
+	}
+	if !strings.Contains(strings.Join(res.Notes, " "), "kept 3 files from your old copy") {
+		t.Errorf("notes: %v", res.Notes)
+	}
+	// the old copy is complete in Removed mods
+	rm := g.listRemoved()
+	if len(rm) != 1 || rm[0].Kind != "script" {
+		t.Fatalf("%+v", rm)
+	}
+	old := join(g.RemovedDir(), rm[0].ID, "SimpleModSettings")
+	if readS(t, join(old, "Scripts", "main.lua")) != "v1" || readS(t, join(old, "addons", "OtherMod", "menu.lua")) != "another mod's file" {
+		t.Fatal("backup incomplete")
+	}
+	// it is still on
+	for _, m := range listScriptMods(g.ue4ssRoot()) {
+		if m.Name == "SimpleModSettings" && !m.Enabled {
+			t.Fatal("the update switched it off")
+		}
+	}
+}
+
+func TestKeepMatch(t *testing.T) {
+	keep := readKeepListText("config/user.json\nSaves\\\n*.ini # comment\nprofiles/*/state.json\n../escape\n")
+	for rel, want := range map[string]bool{
+		"config/user.json":       true,
+		"Config/User.json":       true,
+		"config/defaults.json":   false,
+		"saves/slot1.sav":        true,
+		"settings.ini":           true,
+		"sub/settings.ini":       false,
+		"profiles/me/state.json": true,
+		"profiles/me/other.json": false,
+		"escape":                 false,
+	} {
+		if got := keepMatch(rel, keep); got != want {
+			t.Errorf("%s: %v", rel, got)
+		}
+	}
+}
+
+func readKeepListText(s string) []string {
+	p := join(os.TempDir(), "ace8keep-test.txt")
+	os.WriteFile(p, []byte(s), 0o644)
+	defer os.Remove(p)
+	return readKeepList(p)
+}
+
+// UE4SS's shared folder is updated file by file: added, or replaced with a
+// backup; UE4SS's own files stay.
+func TestSharedFolderFileByFile(t *testing.T) {
+	g := newGame(t)
+	installModding(t, g)
+	shared := join(g.ue4ssRoot(), "Mods", "shared")
+	write(t, join(shared, "Types.lua"), "UE4SS's own")
+	write(t, join(shared, "UEHelpers", "UEHelpers.lua"), "UE4SS's own helpers")
+	write(t, join(shared, "SimpleAudio", "lib.lua"), "lib v1")
+	write(t, join(shared, "SomeoneElse", "x.lua"), "untouched")
+
+	z := join(t.TempDir(), "SimpleAudioPlayer.zip")
+	makeZip(t, z, map[string]string{
+		"ue4ss/Mods/SimpleAudioPlayer/Scripts/main.lua": "player",
+		"ue4ss/Mods/shared/SimpleAudio/lib.lua":         "lib v2",
+		"ue4ss/Mods/shared/SimpleAudio/codec.lua":       "new",
+		"ue4ss/Mods/shared/Types.lua":                   "an older bundled copy",
+		"ue4ss/Mods/shared/UEHelpers/UEHelpers.lua":     "UE4SS's own helpers",
+	})
+	res, err := addFromPaths(g, []string{z}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]string{
+		"SimpleAudio/lib.lua":     "lib v2",
+		"SimpleAudio/codec.lua":   "new",
+		"Types.lua":               "UE4SS's own",
+		"UEHelpers/UEHelpers.lua": "UE4SS's own helpers",
+		"SomeoneElse/x.lua":       "untouched",
+	} {
+		if got := readS(t, join(shared, filepath.FromSlash(p))); got != want {
+			t.Errorf("%s = %q, want %q", p, got, want)
+		}
+	}
+	all := strings.Join(append(append(res.Added, res.Updated...), res.Notes...), " | ")
+	if !strings.Contains(all, "UE4SS shared files (1 file replaced, 1 added") || !strings.Contains(all, "Types.lua") || !strings.Contains(all, "SimpleAudioPlayer (script mod)") {
+		t.Fatalf("%s", all)
+	}
+	// the replaced file is backed up, and restoring puts it back
+	var id string
+	for _, r := range g.listRemoved() {
+		if r.Kind == "shared" {
+			id = r.ID
+		}
+	}
+	if id == "" {
+		t.Fatalf("no backup: %+v", g.listRemoved())
+	}
+	if err := g.restoreRemoved(id); err != nil {
+		t.Fatal(err)
+	}
+	if readS(t, join(shared, "SimpleAudio", "lib.lua")) != "lib v1" || len(g.listRemoved()) != 0 {
+		t.Fatal("restore")
+	}
+	// the same download again changes nothing in shared
+	res, err = addFromPaths(g, []string{z}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readS(t, join(shared, "SimpleAudio", "lib.lua")) != "lib v2" {
+		t.Fatal("second update")
+	}
+}

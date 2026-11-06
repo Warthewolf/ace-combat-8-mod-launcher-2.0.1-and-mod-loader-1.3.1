@@ -68,6 +68,56 @@ YourScriptMod\
 The launcher installs it to `ue4ss\Mods\YourScriptMod\` and lets players switch
 it on and off.
 
+### How updates work
+
+When a player adds a newer version of a script mod the launcher already has:
+
+1. The installed copy goes to **Removed mods** as a complete backup.
+2. The new version is installed.
+3. Every file of the old copy that the new version **doesn't** have is copied
+   back in: settings your mod wrote while the game ran, and files other mods put
+   into your folder (add-ons, songs, profiles). So subfolders for other mods'
+   assets and runtime settings survive updates without the player doing anything.
+4. Files the new version **does** have replace the old ones, unless your
+   `ace8-keep.txt` says otherwise (below).
+
+Files your new version removed are therefore still there after an update. UE4SS
+only runs `Scripts\main.lua` (and what it `require`s), so a leftover Lua file is
+harmless unless your code loads every file in a folder; if it does, ship that
+folder's files in every version, or have your code skip what it doesn't know.
+
+### ace8-keep.txt: files the player's copy keeps
+
+Ship an `ace8-keep.txt` in your mod's folder to name files and folders where the
+**player's** copy wins over the one in your download, typically a settings file
+you ship with defaults that players then change:
+
+```
+# ace8-keep.txt - the player's copy of these is kept when the mod is updated
+config/user.json
+saves/
+profiles/*/state.json
+```
+
+One path per line, relative to your mod's folder; a folder keeps everything in
+it; `*` and `?` match within one path part; `#` starts a comment; case doesn't
+matter. Paths not listed follow the normal rule above.
+
+## UE4SS's shared folder
+
+`ue4ss\Mods\shared` holds Lua libraries several mods use. Ship your library as
+`ue4ss\Mods\shared\YourLibrary\...` in your download. The launcher updates
+this folder **file by file**, never as a whole:
+
+- a file that isn't there yet is added;
+- a file that differs replaces the installed one, and the old one is backed up
+  to Removed mods ("Replaced shared files", which can be restored);
+- UE4SS's own shared files (`Types.lua`, `UEHelpers\`, `jsbProfiler\`) are never
+  overwritten, because downloads often bundle an older copy of them.
+
+Other mods' files in `shared` are left alone. Keep your library in its own
+subfolder so it can't collide with anyone else's.
+
 ## LogicMods (Blueprint mods)
 
 Ship them in a `LogicMods` folder; the launcher puts them in
