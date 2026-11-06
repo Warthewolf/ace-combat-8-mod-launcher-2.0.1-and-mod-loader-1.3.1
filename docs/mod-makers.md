@@ -70,16 +70,15 @@ it on and off.
 
 ### How updates work
 
-When a player adds a newer version of a script mod the launcher already has:
+When a player adds a newer version of a script mod the launcher already has, it
+overwrites the installed copy in place (no backup is kept):
 
-1. The installed copy goes to **Removed mods** as a complete backup.
-2. The new version is installed.
-3. Every file of the old copy that the new version **doesn't** have is copied
-   back in: settings your mod wrote while the game ran, and files other mods put
-   into your folder (add-ons, songs, profiles). So subfolders for other mods'
-   assets and runtime settings survive updates without the player doing anything.
-4. Files the new version **does** have replace the old ones, unless your
-   `ace8-keep.txt` says otherwise (below).
+- Files the new version **has** overwrite the old ones, unless your
+  `ace8-keep.txt` says otherwise (below).
+- Files the new version **doesn't** have are kept: settings your mod wrote while
+  the game ran, and files other mods put into your folder (add-ons, songs,
+  profiles). So subfolders for other mods' assets and runtime settings survive
+  updates without the player doing anything.
 
 Files your new version removed are therefore still there after an update. UE4SS
 only runs `Scripts\main.lua` (and what it `require`s), so a leftover Lua file is
@@ -110,8 +109,7 @@ matter. Paths not listed follow the normal rule above.
 this folder **file by file**, never as a whole:
 
 - a file that isn't there yet is added;
-- a file that differs replaces the installed one, and the old one is backed up
-  to Removed mods ("Replaced shared files", which can be restored);
+- a file that differs overwrites the installed one;
 - UE4SS's own shared files (`Types.lua`, `UEHelpers\`, `jsbProfiler\`) are never
   overwritten, because downloads often bundle an older copy of them.
 

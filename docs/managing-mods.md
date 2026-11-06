@@ -21,7 +21,7 @@ Good to know:
 
 - If the download holds several versions of a mod (for example "Blue" and "Red"
   folders), the launcher asks which one you want.
-- An older copy of the same mod is moved to **Removed mods**, not deleted.
+- Adding a mod you already have updates it: see [Updating a mod](#updating-a-mod).
 - Mods added while Unmodded go with the switched-off files and come into the game
   when you switch to Modded.
 - `.7z` and `.rar` files: unpack them first, then add the folder.
@@ -32,17 +32,19 @@ Good to know:
 
 ## Updating a mod
 
-Add the newer version the same way. The old copy goes to **Removed mods** first,
-so you can always go back.
+Add the newer version the same way. It overwrites the installed version in
+place; no copy of the old version is kept. Each mod on the Mods page shows the
+date it was last updated ("Updated 7 Nov 2026"), or added.
 
 - **Pak mods** are replaced as a whole, so no old file can load next to the new one.
-- **Script mods** keep everything you or other mods added: files the new version
-  doesn't have (settings saved while playing, add-ons other mods put in its
-  folder) are copied over from the old copy. A mod can also name files where your
-  copy wins (see [For mod makers](mod-makers.md#ace8-keeptxt-files-the-players-copy-keeps)).
-- **UE4SS's shared folder** (`ue4ss\Mods\shared`) is updated file by file; files
-  it replaces are backed up as "Replaced shared files" in Removed mods.
+- **Script mods**: the new version's files overwrite the old ones, and everything
+  else you or other mods added is kept (settings saved while playing, add-ons
+  other mods put in its folder). A mod can also name files where your copy wins
+  (see [For mod makers](mod-makers.md#ace8-keeptxt-files-the-players-copy-keeps)).
+- **UE4SS's shared folder** (`ue4ss\Mods\shared`) is updated file by file.
 - A script mod you had switched off stays off.
+- If an update can't finish (a file is held open, the disk is full), the old
+  version is put back as it was.
 
 ## Load order
 

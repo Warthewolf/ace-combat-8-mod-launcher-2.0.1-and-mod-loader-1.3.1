@@ -513,7 +513,7 @@ func TestAddZipWithVersions(t *testing.T) {
 	if exists(join(g.loaderDir(), "Red")) || !exists(join(g.loaderDir(), "Blue")) {
 		t.Fatal("Red should have been replaced")
 	}
-	if len(g.listRemoved()) != 1 || !strings.Contains(strings.Join(res.Notes, " "), "moved to Removed mods") {
+	if len(g.listRemoved()) != 0 || !strings.Contains(strings.Join(res.Notes, " "), "The older copy in Red was replaced") {
 		t.Fatalf("removed %+v notes %v", g.listRemoved(), res.Notes)
 	}
 }
@@ -639,7 +639,7 @@ func TestAddWhileUnmoddedLeavesTheGameAlone(t *testing.T) {
 	}
 }
 
-func TestAddLooseFileKeepsOlderCopy(t *testing.T) {
+func TestAddLooseFileReplacesOlderCopy(t *testing.T) {
 	g := newGame(t)
 	installModding(t, g)
 	tm := join(g.Paks(), "~mods")
@@ -656,15 +656,13 @@ func TestAddLooseFileKeepsOlderCopy(t *testing.T) {
 	if string(b) != "new-toc" || exists(join(tm, "Loose_P.sig")) {
 		t.Fatal("new copy not in place, or the old .sig was left with it")
 	}
-	rm := g.listRemoved()
-	if len(rm) != 1 || rm[0].Kind != "tilde" {
+	// an update overwrites: nothing in Removed mods, nothing left aside
+	if rm := g.listRemoved(); len(rm) != 0 {
 		t.Fatalf("removed %+v", rm)
 	}
-	dir, _, _ := g.removedEntry(rm[0].ID)
-	for _, f := range []string{"Loose_P.utoc", "Loose_P.ucas", "Loose_P.sig"} {
-		if b, _ := os.ReadFile(join(dir, f)); !strings.HasPrefix(string(b), "old-") {
-			t.Fatalf("older %s not kept", f)
-		}
+	ents, _ := os.ReadDir(tm)
+	if len(ents) != 2 {
+		t.Fatalf("left in ~mods: %v", ents)
 	}
 }
 
@@ -935,9 +933,8 @@ func TestSetupFreshAndUpdate(t *testing.T) {
 	if b, _ := os.ReadFile(join(g2.loaderDir(), "loadorder.txt")); string(b) != "+Mine\r\n" {
 		t.Fatal("load order replaced")
 	}
-	rm := g2.listRemoved()
-	if len(rm) != 1 || rm[0].Kind != "modloader" {
-		t.Fatalf("old loader not kept: %+v", rm)
+	if rm := g2.listRemoved(); len(rm) != 0 {
+		t.Fatalf("an update overwrites the Mod Loader; nothing goes to Removed mods: %+v", rm)
 	}
 	// unmodded: setup waits
 	g2.switchTo(modeUnmodded)
@@ -1576,17 +1573,15 @@ func TestUpdateScriptModKeepsPlayerFiles(t *testing.T) {
 			t.Errorf("%s = %q, want %q", p, got, want)
 		}
 	}
-	if !strings.Contains(strings.Join(res.Notes, " "), "kept 3 files from your old copy") {
+	if !strings.Contains(strings.Join(res.Notes, " "), "kept 3 files of yours") {
 		t.Errorf("notes: %v", res.Notes)
 	}
-	// the old copy is complete in Removed mods
-	rm := g.listRemoved()
-	if len(rm) != 1 || rm[0].Kind != "script" {
+	// overwritten in place: no copy in Removed mods, nothing left aside
+	if rm := g.listRemoved(); len(rm) != 0 {
 		t.Fatalf("%+v", rm)
 	}
-	old := join(g.RemovedDir(), rm[0].ID, "SimpleModSettings")
-	if readS(t, join(old, "Scripts", "main.lua")) != "v1" || readS(t, join(old, "addons", "OtherMod", "menu.lua")) != "another mod's file" {
-		t.Fatal("backup incomplete")
+	if exists(mod + updatingSuffix) {
+		t.Fatal("old copy left aside")
 	}
 	// it is still on
 	for _, m := range listScriptMods(g.ue4ssRoot()) {
@@ -1660,21 +1655,9 @@ func TestSharedFolderFileByFile(t *testing.T) {
 	if !strings.Contains(all, "UE4SS shared files (1 file replaced, 1 added") || !strings.Contains(all, "Types.lua") || !strings.Contains(all, "SimpleAudioPlayer (script mod)") {
 		t.Fatalf("%s", all)
 	}
-	// the replaced file is backed up, and restoring puts it back
-	var id string
-	for _, r := range g.listRemoved() {
-		if r.Kind == "shared" {
-			id = r.ID
-		}
-	}
-	if id == "" {
-		t.Fatalf("no backup: %+v", g.listRemoved())
-	}
-	if err := g.restoreRemoved(id); err != nil {
-		t.Fatal(err)
-	}
-	if readS(t, join(shared, "SimpleAudio", "lib.lua")) != "lib v1" || len(g.listRemoved()) != 0 {
-		t.Fatal("restore")
+	// overwritten in place: nothing in Removed mods
+	if rm := g.listRemoved(); len(rm) != 0 {
+		t.Fatalf("%+v", rm)
 	}
 	// the same download again changes nothing in shared
 	res, err = addFromPaths(g, []string{z}, nil)
@@ -1683,5 +1666,73 @@ func TestSharedFolderFileByFile(t *testing.T) {
 	}
 	if readS(t, join(shared, "SimpleAudio", "lib.lua")) != "lib v2" {
 		t.Fatal("second update")
+	}
+}
+
+// Each mod shows when it was added, and when it was last updated.
+func TestModDates(t *testing.T) {
+	g := newGame(t)
+	installModding(t, g)
+	src := join(t.TempDir(), "Hornet")
+	write(t, join(src, "Hornet_P.utoc"), "v1")
+	write(t, join(src, "Hornet_P.ucas"), "v1")
+	sm := join(t.TempDir(), "CoolCam")
+	write(t, join(sm, "Scripts", "main.lua"), "v1")
+	if _, err := addFromPaths(g, []string{src, sm}, nil); err != nil {
+		t.Fatal(err)
+	}
+	find := func() (*PakMod, *ScriptMod) {
+		st := buildState()
+		var p *PakMod
+		var s *ScriptMod
+		for _, m := range st.PakMods {
+			if m.Key == "Hornet" {
+				p = m
+			}
+		}
+		for _, m := range st.ScriptMods {
+			if m.Name == "CoolCam" {
+				s = m
+			}
+		}
+		if p == nil || s == nil {
+			t.Fatal("mods not listed")
+		}
+		return p, s
+	}
+	p, s := find()
+	if p.Added == nil || p.Updated != nil || s.Added == nil || s.Updated != nil {
+		t.Fatalf("after adding: %+v %+v / %+v %+v", p.Added, p.Updated, s.Added, s.Updated)
+	}
+	added := *p.Added
+	time.Sleep(20 * time.Millisecond)
+	write(t, join(src, "Hornet_P.utoc"), "v2")
+	write(t, join(sm, "Scripts", "main.lua"), "v2")
+	if _, err := addFromPaths(g, []string{src, sm}, nil); err != nil {
+		t.Fatal(err)
+	}
+	p, s = find()
+	if p.Updated == nil || !p.Updated.After(added) || !p.Added.Equal(added) || s.Updated == nil {
+		t.Fatalf("after updating: %+v %+v / %+v", p.Added, p.Updated, s.Updated)
+	}
+	// it stays known while Unmodded and back
+	g.switchTo(modeUnmodded)
+	g.switchTo(modeModded)
+	if p, _ = find(); p.Updated == nil {
+		t.Fatal("dates lost by switching")
+	}
+}
+
+// a launcher closed in the middle of an update leaves "<name>.ace8-updating"
+func TestSweepUpdating(t *testing.T) {
+	g := newGame(t)
+	installModding(t, g)
+	ld := g.loaderDir()
+	container(t, join(ld, "Done"), "Done_P")
+	container(t, join(ld, "Done"+updatingSuffix), "Done_P") // new one is in: old goes
+	container(t, join(ld, "Lost"+updatingSuffix), "Lost_P") // new one never came: old comes back
+	sweepUpdating(ld)
+	if exists(join(ld, "Done"+updatingSuffix)) || !exists(join(ld, "Done")) || !exists(join(ld, "Lost")) || exists(join(ld, "Lost"+updatingSuffix)) {
+		t.Fatal("not cleaned up")
 	}
 }

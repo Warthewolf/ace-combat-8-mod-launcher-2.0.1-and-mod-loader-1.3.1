@@ -12,14 +12,17 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 type ScriptMod struct {
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	Enabled     bool   `json:"enabled"`
-	Kind        string `json:"kind"`
-	Description string `json:"description,omitempty"`
+	Name        string     `json:"name"`
+	Path        string     `json:"path"`
+	Enabled     bool       `json:"enabled"`
+	Kind        string     `json:"kind"`
+	Description string     `json:"description,omitempty"`
+	Added       *time.Time `json:"added,omitempty"`
+	Updated     *time.Time `json:"updated,omitempty"`
 }
 
 var notScriptMods = []string{"IoStoreLoaderMod", "shared", "removed-mods"}

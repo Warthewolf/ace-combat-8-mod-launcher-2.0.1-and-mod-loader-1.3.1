@@ -493,6 +493,19 @@ function renderMods() {
 const gripSVG = '<svg viewBox="0 0 12 16" aria-hidden="true"><circle cx="3" cy="3" r="1.4"/><circle cx="9" cy="3" r="1.4"/><circle cx="3" cy="8" r="1.4"/><circle cx="9" cy="8" r="1.4"/><circle cx="3" cy="13" r="1.4"/><circle cx="9" cy="13" r="1.4"/></svg>';
 const lockSVG = '<svg viewBox="0 0 12 16" aria-hidden="true"><path d="M3 7V5a3 3 0 0 1 6 0v2h1v7H2V7zm1.5 0h3V5a1.5 1.5 0 0 0-3 0z"/></svg>';
 
+// "Updated 7 Nov 2026" / "Added 7 Nov 2026": when the launcher last put the mod in
+function fmtDate(t) {
+  const d = new Date(t);
+  if (isNaN(d) || d.getFullYear() < 2000) return '';
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function modDateText(m, fallback) {
+  if (m.updated && fmtDate(m.updated)) return ['Updated ' + esc(fmtDate(m.updated))];
+  if (m.added && fmtDate(m.added)) return ['Added ' + esc(fmtDate(m.added))];
+  const w = fallback ? fmtWhen(fallback) : '';
+  return w ? ['Added ' + esc(w)] : [];
+}
+
 function pakRow(m, i) {
   const pinned = m.skinList;
   const li = el(`<li class="item ${m.enabled ? '' : 'off'} ${m.key === selectedKey ? 'selected' : ''}" tabindex="0" data-key="${esc(m.key)}" aria-label="${esc(m.key)}, position ${i + 1}"></li>`);
@@ -510,7 +523,7 @@ function pakRow(m, i) {
   if (m.skin && m.skin.title && m.skin.title !== m.name) meta.push(esc(m.skin.title));
   meta.push(fmtSize(m.size));
   if (m.containers.length > 1) meta.push(m.containers.length + ' mod files');
-  const when = fmtWhen(m.mtime); if (when) meta.push('Added ' + when);
+  meta.push(...modDateText(m, m.mtime));
   const mainCol = el(`<div class="main-col"><div class="name">${esc(m.key.replace(/^~mods\\/, ''))}</div><div class="meta">${tags.join('')}<span>${meta.join('</span><span>')}</span></div></div>`);
   const actions = el(`<div class="actions"></div>`);
   const up = el(`<button class="btn small ghost mv" title="Move up" aria-label="Move ${esc(m.key)} up">▲</button>`);
@@ -622,7 +635,8 @@ function scriptRow(sm) {
     const r = await act('script', { name: sm.name, enabled: !sm.enabled });
     if (r) toast(`${sm.name} is ${!sm.enabled ? 'on' : 'off'}. It applies the next time the game starts.`);
   };
-  const main = el(`<div class="main-col"><div class="name">${esc(sm.name)}</div><div class="meta"><span class="tag">${esc(sm.kind)}</span>${sm.description ? `<span>${esc(sm.description)}</span>` : ''}</div></div>`);
+  const dates = modDateText(sm).map(x => `<span>${x}</span>`).join('');
+  const main = el(`<div class="main-col"><div class="name">${esc(sm.name)}</div><div class="meta"><span class="tag">${esc(sm.kind)}</span>${sm.description ? `<span>${esc(sm.description)}</span>` : ''}${dates}</div></div>`);
   const actions = el('<div class="actions"></div>');
   const show = el('<button class="btn small ghost">Show</button>'); show.onclick = () => api('reveal', { path: sm.path });
   const rm = el('<button class="btn small ghost">Remove</button>'); rm.onclick = () => removeMod('script', sm.name);

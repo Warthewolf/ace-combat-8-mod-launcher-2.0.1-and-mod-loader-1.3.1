@@ -539,6 +539,13 @@ func buildState() State {
 		s.PakMods = []*PakMod{}
 	}
 	s.ScriptMods = listScriptMods(g.ue4ssRoot())
+	dates := loadModDates()
+	for _, m := range s.PakMods {
+		m.Added, m.Updated = datesFor(dates, pakDateKey(m.Key))
+	}
+	for _, m := range s.ScriptMods {
+		m.Added, m.Updated = datesFor(dates, scriptDateKey(m.Name))
+	}
 	if s.ScriptMods == nil {
 		s.ScriptMods = []*ScriptMod{}
 	}

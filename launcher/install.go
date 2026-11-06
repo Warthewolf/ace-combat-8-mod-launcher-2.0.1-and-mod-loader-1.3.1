@@ -205,14 +205,6 @@ func (g Game) setup() (SetupResult, error) {
 		return res, errNoBundle
 	}
 	updateLoader := st.Loader == "" || st.CanUpdate
-	if st.CanUpdate {
-		// keep the old loader, in case anyone wants it back
-		old := join(g.Win64(), "ue4ss", "Mods", "IoStoreLoaderMod", "dlls", "main.dll")
-		dst := join(g.RemovedDir(), time.Now().Format("2006-01-02 150405")+" Mod Loader "+st.Loader)
-		if err := copyFile(old, join(dst, "main.dll"), 0o644); err == nil {
-			writeRemovedInfo(dst, removedInfo{Kind: "modloader", Name: "Mod Loader " + st.Loader, From: old, Removed: time.Now()})
-		}
-	}
 	bd := bundleDir()
 	err := filepath.Walk(bd, func(p string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -721,8 +713,14 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 	}
 	stage := join(g.Storage(), "Adding")
 	os.RemoveAll(stage) // left over from a launcher that was closed while adding
+	sweepUpdating(at.loader, join(at.ue, "Mods"), at.tilde, at.logic)
 	defer os.RemoveAll(stage)
 	needsBPModLoader := false
+	dated := map[string]bool{} // script mods: date key -> updated
+	var datedPaks []struct {   // pak mods: where they went
+		path    string
+		updated bool
+	}
 	for i, u := range units {
 		if len(u.files) == 0 {
 			continue
@@ -751,7 +749,7 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 			}
 			switch {
 			case sr.Replaced > 0:
-				res.Updated = append(res.Updated, fmt.Sprintf("UE4SS shared files (%s replaced, %s added; the previous ones are in Removed mods)", plural(sr.Replaced, "file"), strconv.Itoa(sr.Added)))
+				res.Updated = append(res.Updated, fmt.Sprintf("UE4SS shared files (%s replaced, %s added)", plural(sr.Replaced, "file"), strconv.Itoa(sr.Added)))
 			case sr.Added > 0:
 				res.Added = append(res.Added, "UE4SS shared files ("+plural(sr.Added, "file")+")")
 			}
@@ -760,14 +758,44 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 			}
 			continue
 		}
-		// 2. Move older copies out of the way, into Removed mods.
-		var putBack []string
+		// 2. An update replaces the installed copy in place; nothing goes to
+		// Removed mods. The old files are first renamed aside where they are
+		// ("<name>.ace8-updating") and only deleted once the new copy is in, so
+		// a failed update leaves the old version working.
+		var asideMoves [][2]string // {where it was, where it is now}
+		asideSeen := map[string]bool{}
+		putAside := func(p string) error {
+			if asideSeen[strings.ToLower(p)] || !lexists(p) {
+				return nil
+			}
+			dst := p + updatingSuffix
+			os.RemoveAll(dst)
+			if err := moveItem(p, dst); err != nil {
+				return err
+			}
+			asideSeen[strings.ToLower(p)] = true
+			asideMoves = append(asideMoves, [2]string{p, dst})
+			return nil
+		}
 		undo := func() {
-			for k := len(putBack) - 1; k >= 0; k-- {
-				if err := g.restoreRemoved(filepath.Base(putBack[k])); err != nil {
-					logf("could not put %s back: %v", putBack[k], err)
+			for k := len(asideMoves) - 1; k >= 0; k-- {
+				if err := moveItem(asideMoves[k][1], asideMoves[k][0]); err != nil {
+					logf("could not put %s back: %v", asideMoves[k][0], err)
 				}
 			}
+		}
+		// a loose mod is up to four files with the same name: they go together
+		companions := func(p string) []string {
+			ext := strings.ToLower(filepath.Ext(p))
+			if ext != ".utoc" && ext != ".ucas" && ext != ".pak" && ext != ".sig" {
+				return []string{p}
+			}
+			base := strings.TrimSuffix(p, filepath.Ext(p))
+			var out []string
+			for _, e := range []string{".utoc", ".ucas", ".pak", ".sig"} {
+				out = append(out, base+e)
+			}
+			return out
 		}
 		older := map[string]bool{}
 		if u.kind != "script" {
@@ -777,76 +805,75 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 					continue
 				}
 				if u.isFiles && m.IsFile && samePath(filepath.Dir(m.Path), u.target) {
-					continue // a loose file with the same name: replaced below, as an update
+					continue // a loose file with the same name: replaced below
 				}
 				for _, c := range m.Containers {
 					for _, n := range u.utocs {
-						if containerKey(c.Name) == containerKey(n) && !older[strings.ToLower(m.Path)] {
-							older[strings.ToLower(m.Path)] = true
-							kind := "pak"
-							if m.Where == "tilde" {
-								kind = "tilde"
-							}
-							if d, err := g.removeToStorage(kind, m.Key, m.Path, m.IsFile); err == nil {
-								putBack = append(putBack, d)
-								res.Notes = append(res.Notes, "The older copy in "+m.Key+" was moved to Removed mods.")
+						if containerKey(c.Name) != containerKey(n) || older[strings.ToLower(m.Path)] {
+							continue
+						}
+						older[strings.ToLower(m.Path)] = true
+						paths := []string{m.Path}
+						if m.IsFile {
+							paths = companions(m.Path)
+						}
+						for _, p := range paths {
+							if err := putAside(p); err != nil {
+								undo()
+								return res, fmt.Errorf("could not replace the older copy in %s: %s", m.Key, explainMoveError(err))
 							}
 						}
+						res.Notes = append(res.Notes, "The older copy in "+m.Key+" was replaced.")
 					}
 				}
 			}
 		}
-		updated, wasOff, oldCopy := false, false, ""
+		updated, wasOff := false, false
 		if u.isFiles {
 			// loose files in ~mods or LogicMods: a file with the same name is an older copy
 			for rel := range u.files {
-				dst := join(u.target, filepath.FromSlash(rel))
-				if !exists(dst) {
-					continue
+				for _, p := range companions(join(u.target, filepath.FromSlash(rel))) {
+					if !lexists(p) {
+						continue
+					}
+					if err := putAside(p); err != nil {
+						undo()
+						return res, fmt.Errorf("could not replace %s: %s", filepath.Base(p), explainMoveError(err))
+					}
+					updated = true
 				}
-				kind, name := "tilde", "~mods\\"+strings.TrimSuffix(path.Base(rel), path.Ext(rel))
-				if u.kind == "logicfiles" {
-					kind, name = "logic", strings.TrimSuffix(path.Base(rel), path.Ext(rel))
-				}
-				d, err := g.removeToStorage(kind, name, dst, true)
-				if err != nil {
-					undo()
-					return res, fmt.Errorf("could not replace %s: %s", path.Base(rel), explainMoveError(err))
-				}
-				putBack = append(putBack, d)
-				updated = true
 			}
 		} else if exists(u.target) {
 			wasOff = u.kind == "script" && isFile(join(u.target, "enabled.off")) && !isFile(join(u.target, "enabled.txt"))
-			d, err := g.removeToStorage(u.kind, u.name, u.target, false)
-			if err != nil {
+			if u.kind == "script" {
+				// keep what the player and other mods added to the installed copy:
+				// files the new version doesn't have, and those ace8-keep.txt names
+				carried, kept, err := carryOver(u.target, tmp)
+				if err != nil {
+					return res, fmt.Errorf("%s could not be updated: your files in it could not be kept (%v). Nothing was changed for this mod.", u.name, err)
+				}
+				if carried > 0 || kept > 0 {
+					res.Notes = append(res.Notes, fmt.Sprintf("%s: kept %s of yours (settings and add-ons the new version doesn't have).", u.name, plural(carried+kept, "file")))
+				}
+				if wasOff {
+					os.Remove(join(tmp, "enabled.txt")) // it stays switched off
+				}
+			}
+			if err := putAside(u.target); err != nil {
 				undo()
 				return res, fmt.Errorf("could not replace %s: %s", u.name, explainMoveError(err))
 			}
-			putBack = append(putBack, d)
 			updated = true
-			if u.kind == "script" {
-				oldCopy = join(d, filepath.Base(u.target))
-			}
 		}
-		// 3. Move the new copy in. If that fails, the older copies go back.
+		// 3. Move the new copy in. If that fails, the old one goes back.
 		if err := commitUnit(u, tmp); err != nil {
 			undo()
 			return res, fmt.Errorf("%s could not be added: %s Nothing was changed for this mod.", u.name, explainMoveError(err))
 		}
-		if oldCopy != "" {
-			// keep what the player and other mods added to the old copy (it stays
-			// complete in Removed mods as well)
-			carried, kept, err := carryOver(oldCopy, u.target)
-			if carried > 0 || kept > 0 {
-				res.Notes = append(res.Notes, fmt.Sprintf("%s: kept %s from your old copy (settings and add-ons the download doesn't have).", u.name, plural(carried+kept, "file")))
-			}
-			if err != nil {
-				logf("carrying files over to %s: %v", u.target, err)
-				res.Notes = append(res.Notes, u.name+": some of your files from the old copy could not be kept ("+err.Error()+"). The old copy is complete in Removed mods.")
-			}
-			if wasOff {
-				os.Remove(join(u.target, "enabled.txt")) // carried over as enabled.off; switched below
+		// 4. The old files are no longer needed.
+		for _, m := range asideMoves {
+			if err := os.RemoveAll(m[1]); err != nil {
+				logf("could not delete the old %s: %v", m[1], err)
 			}
 		}
 		if u.kind == "script" {
@@ -862,6 +889,22 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 		if strings.HasPrefix(u.kind, "logic") {
 			needsBPModLoader = true
 		}
+		switch {
+		case u.kind == "script":
+			dated[scriptDateKey(u.name)] = updated
+		case u.isFiles:
+			for rel := range u.files {
+				datedPaks = append(datedPaks, struct {
+					path    string
+					updated bool
+				}{join(u.target, filepath.FromSlash(rel)), updated})
+			}
+		default:
+			datedPaks = append(datedPaks, struct {
+				path    string
+				updated bool
+			}{u.target, updated || len(older) > 0})
+		}
 		label := u.name
 		if u.kind == "script" {
 			label += " (script mod)"
@@ -876,6 +919,17 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 		res.Notes = append(res.Notes, "LogicMods need UE4SS's BPModLoaderMod, which is not installed, so this mod won't load until it is. It comes with the full UE4SS download (ue4ss\\Mods\\BPModLoaderMod).")
 	}
 	g.tidyLoadOrder()
+	if len(datedPaks) > 0 {
+		now, _ := scanPakMods(at.loader, at.tilde)
+		for _, m := range now {
+			for _, d := range datedPaks {
+				if samePath(m.Path, d.path) {
+					dated[pakDateKey(m.Key)] = d.updated
+				}
+			}
+		}
+	}
+	recordModDates(dated)
 	logf("added from %s: added %v, updated %v, notes %v", source, res.Added, res.Updated, res.Notes)
 	return res, nil
 }

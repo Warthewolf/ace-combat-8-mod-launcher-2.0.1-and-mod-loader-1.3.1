@@ -126,10 +126,16 @@ into a unit:
   its own).
 - Several candidate folders that look like versions of one mod → the window asks.
 
-Each unit is first written to a staging folder, then committed. An older copy of
-the same mod is moved to Removed mods first; if a commit fails, it is put back.
-Names are cleaned so Windows can store them (reserved names, trailing dots and
-spaces). While Unmodded, mods go to the matching place under `Switched off`.
+Each unit is first written to a staging folder, then committed. An update
+replaces the installed copy in place: the old copy is renamed aside
+(`<name>.ace8-updating`), the new one moved in, then the old one deleted; if the
+new one can't go in, the old one is renamed back. Leftovers from a launcher closed
+mid-update are cleaned up on the next add. Script mods first get the installed
+copy's extra files (and those named in `ace8-keep.txt`) copied into the staged
+new copy; UE4SS's `shared` folder is updated file by file. The date of each add
+or update is kept in `mod-dates.json` in the data folder. Names are cleaned so Windows can store
+them (reserved names, trailing dots and spaces). While Unmodded, mods go to the
+matching place under `Switched off`.
 
 ## Reading the Mod Loader's log
 

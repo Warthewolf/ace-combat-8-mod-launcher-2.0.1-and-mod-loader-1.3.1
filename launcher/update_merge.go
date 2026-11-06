@@ -2,19 +2,17 @@ package main
 
 // Updating script mods and UE4SS's shared folder without losing anything.
 //
-// Script mods: the old copy goes to Removed mods as before (a full backup), the
-// new copy comes in, and then every file of the old copy that the download
-// doesn't have is copied over: settings a mod wrote while the game ran, and
-// files other mods put into its folder (add-ons for Simple Mod Settings, songs
-// for an audio player). A mod can also list, in ace8-keep.txt, files the
+// Updates replace the installed copy in place; nothing goes to Removed mods.
+// Script mods: every file of the installed copy that the download doesn't have
+// is kept: settings a mod wrote while the game ran, and files other mods put
+// into its folder (add-ons for Simple Mod Settings, songs for an audio player). A mod can also list, in ace8-keep.txt, files the
 // player's copy should win for even when the download has them (default
 // settings files the player has changed).
 //
 // UE4SS's shared folder (ue4ss\Mods\shared) holds Lua libraries several mods use.
 // It is never replaced as a whole: each file from the download is added, or
-// replaces the installed one when it differs. Replaced files are backed up to
-// Removed mods first. UE4SS's own shared files are never overwritten, because
-// mods often bundle an older copy of them.
+// overwrites the installed one when it differs. UE4SS's own shared files are
+// never overwritten, because mods often bundle an older copy of them.
 
 import (
 	"bufio"
@@ -28,8 +26,39 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
+
+// updatingSuffix marks an old copy set aside while its update is put in place.
+const updatingSuffix = ".ace8-updating"
+
+// sweepUpdating cleans up after a launcher that was closed in the middle of an
+// update: an old copy whose new one is in place is deleted; one whose new copy
+// never arrived is put back.
+func sweepUpdating(dirs ...string) {
+	for _, d := range dirs {
+		var walk func(dir string, depth int)
+		walk = func(dir string, depth int) {
+			ents, _ := os.ReadDir(dir)
+			for _, e := range ents {
+				p := join(dir, e.Name())
+				if strings.HasSuffix(e.Name(), updatingSuffix) {
+					orig := strings.TrimSuffix(p, updatingSuffix)
+					if lexists(orig) {
+						os.RemoveAll(p)
+					} else {
+						moveItem(p, orig)
+					}
+					logf("cleaned up an unfinished update: %s", p)
+					continue
+				}
+				if e.IsDir() && depth > 0 {
+					walk(p, depth-1)
+				}
+			}
+		}
+		walk(d, 1)
+	}
+}
 
 // keepListName is the file a mod ships to name files the player's copy keeps.
 const keepListName = "ace8-keep.txt"
@@ -75,9 +104,9 @@ func keepMatch(rel string, keep []string) bool {
 	return false
 }
 
-// carryOver copies into newDir the files of oldDir that the new copy doesn't
-// have, and the files the keep list says the player's copy wins for. oldDir
-// stays complete (it is the backup in Removed mods).
+// carryOver copies into newDir (the staged new copy) the files of oldDir (the
+// installed copy) that the new copy doesn't have, and the files the keep list
+// says the player's copy wins for.
 func carryOver(oldDir, newDir string) (carried, kept int, err error) {
 	keep := readKeepList(join(newDir, keepListName))
 	if keep == nil {
@@ -183,7 +212,7 @@ func isStockShared(rel string) bool {
 type sharedResult struct {
 	Added, Replaced, Same int
 	KeptStock             []string
-	Backup                string // the Removed mods entry with the replaced files
+	Backup                string // the overwritten files, while the update runs
 }
 
 // commitShared puts the staged files of the shared folder in place, file by file.
@@ -213,21 +242,15 @@ func (g Game) commitShared(u *unit, tmp, source string) (sharedResult, error) {
 		}
 		replace = append(replace, rel)
 	}
-	// back up what is about to be replaced
+	// the files about to be overwritten are copied aside, only to put them back
+	// if the update fails part way; they are deleted afterwards
 	if len(replace) > 0 {
-		name := "UE4SS shared files (before " + source + ")"
-		dir := join(g.RemovedDir(), time.Now().Format("2006-01-02 150405")+" "+safeName("UE4SS shared files"))
-		for n := 2; exists(dir); n++ {
-			dir = join(g.RemovedDir(), fmt.Sprintf("%s %s %d", time.Now().Format("2006-01-02 150405"), safeName("UE4SS shared files"), n))
-		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return r, err
-		}
-		writeRemovedInfo(dir, removedInfo{Kind: "shared", Name: name, From: u.target, Files: replace, Removed: time.Now()})
+		dir := tmp + "-old"
+		os.RemoveAll(dir)
 		for _, rel := range replace {
 			if err := copyFile(join(u.target, filepath.FromSlash(rel)), join(dir, "files", filepath.FromSlash(rel)), 0o644); err != nil {
 				os.RemoveAll(dir)
-				return r, fmt.Errorf("could not back up shared\\%s: %v", rel, err)
+				return r, fmt.Errorf("could not read shared\\%s: %v", rel, err)
 			}
 		}
 		r.Backup = dir
@@ -261,6 +284,10 @@ func (g Game) commitShared(u *unit, tmp, source string) (sharedResult, error) {
 			r.Added++
 			added = append(added, dst)
 		}
+	}
+	if r.Backup != "" {
+		os.RemoveAll(r.Backup)
+		r.Backup = ""
 	}
 	logf("shared files from %s: %d added, %d replaced, %d already the same, UE4SS's own kept: %v", source, r.Added, r.Replaced, r.Same, r.KeptStock)
 	return r, nil
