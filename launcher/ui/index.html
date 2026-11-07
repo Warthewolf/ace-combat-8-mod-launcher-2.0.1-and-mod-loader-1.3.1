@@ -42,10 +42,11 @@ try { var th = localStorage.getItem('ace8-theme'); if (th === 'light' || th === 
         <h1 id="h-play" class="page-title">Play</h1>
 
         <div id="findGame" hidden class="card bad big">
-          <h3>Game not found</h3>
+          <h3 id="findGameTitle">Game not found</h3>
+          <p id="findGameMissing" hidden></p>
           <p>Choose the <b>ACE COMBAT 8</b> folder. It is usually <span class="path">…\steamapps\common\ACE COMBAT 8</span>.</p>
           <p class="fine">To find it: in Steam, right-click <b>ACE COMBAT 8</b>, <b>Manage</b>, <b>Browse local files</b>. The folder that opens is the one.</p>
-          <div class="row"><button class="btn primary" id="btnPickGame1">Choose the game folder</button></div>
+          <div class="row"><button class="btn" id="btnUseElsewhere" hidden></button><button class="btn primary" id="btnPickGame1">Choose the game folder</button></div>
         </div>
 
         <div id="playBody">

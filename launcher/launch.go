@@ -53,9 +53,10 @@ type LaunchInfo struct {
 	How       string    `json:"how"`
 	SawGame   bool      `json:"sawGame"`
 	GameEnded bool      `json:"gameEnded"`
-	// Waiting: the launcher is still watching for the game to appear. Once
-	// false with SawGame false, the game didn't start.
+	// Waiting: the launcher is still watching for the game to appear.
+	// GaveUp: it stopped watching without seeing it: the game didn't start.
 	Waiting   bool      `json:"waiting"`
+	GaveUp    bool      `json:"gaveUp,omitempty"`
 	Note      string    `json:"note,omitempty"` // something the player should know about this start
 	LogBefore time.Time `json:"-"`
 }
@@ -275,7 +276,7 @@ func watchLaunch(li *LaunchInfo) {
 		}
 		if time.Since(start) > limit {
 			launchMu.Lock()
-			li.Waiting = false
+			li.Waiting, li.GaveUp = false, true
 			launchMu.Unlock()
 			logf("the game did not appear within %v of Play", limit)
 			return

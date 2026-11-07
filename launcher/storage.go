@@ -239,8 +239,9 @@ func (g Game) moveStorage(target string) (StorageResult, error) {
 			s.StorageDir, s.StorageGame = target, g.Root
 		}
 	}); err != nil {
-		// updateSettings has already changed the settings in memory: put them back,
-		// so the launcher goes on using the old folder that everything goes back to
+		// updateSettings keeps the old settings when it can't save them; putting
+		// them back again makes sure the launcher goes on using the old folder,
+		// which everything was moved back to
 		updateSettings(func(s *Settings) { s.StorageDir, s.StorageGame = before.StorageDir, before.StorageGame })
 		return fail(fmt.Sprintf("the launcher could not save its settings (%v).", err))
 	}

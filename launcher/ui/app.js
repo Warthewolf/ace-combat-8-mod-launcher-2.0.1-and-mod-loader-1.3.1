@@ -326,11 +326,23 @@ function launchStarting() {
   return !!(L && !L.sawGame && !L.gameEnded && !L.gaveUp && !st.gameRunning && Date.now() - new Date(L.started) < 90000);
 }
 
+// The game folder the launcher knew can't be found (a drive that isn't
+// connected): say so, and offer a copy of the game found somewhere else.
+function renderFindGame() {
+  const g = STATE.game, miss = $('#findGameMissing'), use = $('#btnUseElsewhere');
+  $('#findGameTitle').textContent = g.missing ? 'Game folder not found' : 'Game not found';
+  miss.hidden = !g.missing;
+  miss.innerHTML = g.missing ? `<span class="path">${esc(g.missing)}</span> can't be found. If it is on a drive that isn't connected, connect it and the launcher finds it again. Or choose the game folder:` : '';
+  use.hidden = !g.elsewhere;
+  use.textContent = g.elsewhere ? 'Use the copy at ' + g.elsewhere : '';
+  use.title = g.elsewhere || '';
+}
+
 function renderPlay() {
   const s = STATE, st = STATUS || s.status;
   $('#findGame').hidden = s.game.found;
   $('#playBody').hidden = !s.game.found;
-  if (!s.game.found) return;
+  if (!s.game.found) { renderFindGame(); return; }
 
   const m = currentMode();
   const sw = $('#modeSwitch');
@@ -440,7 +452,7 @@ function renderTodo() {
     return;
   }
   if (m === 'mixed' || s.unfinishedSwitch) {
-    cards.push(card('bad', 'Finish switching', '<p>The last switch stopped halfway: some mod files are in the game and some in storage. Nothing is lost. Pick one to finish.</p>',
+    cards.push(card('bad', 'Finish switching', '<p>The last switch stopped halfway: some mod files are in the game and some in storage. Nothing is lost: pick one to finish, and the files from both places are put together.</p>',
       [{ label: 'Make it Modded', fn: () => doSwitch('modded'), disabled: busyLocal }, { label: 'Make it Unmodded', fn: () => doSwitch('unmodded'), disabled: busyLocal }]));
   }
   if (setupMissingIn(s)) {
@@ -1228,6 +1240,10 @@ async function dropFiles(files, label) {
     return;
   }
   const total = files.reduce((a, f) => a + f.file.size, 0);
+  if (total > 16 * 1073741824) {
+    toast(`${label} is ${fmtSize(total)}, too big to drop. Use Add a mod… or Add unzipped folder… on the Mods page instead.`, 'bad');
+    return;
+  }
   if (total > 4 * 1073741824 || files.length > 5000) {
     const v = await dialog({ title: 'That\'s a lot of files', html: `<p>${esc(label)} is ${fmtSize(total)} in ${plural(files.length, 'file')}, much more than a mod usually is. Did you mean to drop it?</p>`,
       buttons: [{ label: 'Cancel', value: 'cancel', kind: 'ghost' }, { label: 'Add it anyway', value: 'go', kind: 'primary' }] });
@@ -1323,6 +1339,10 @@ $('#btnPickGame1').onclick = $('#btnPickGame2').onclick = e => withBusy(e.curren
     return;
   }
   const r = await act('pick-game', {});
+  if (r && r !== true) toast('Game folder: ' + r);
+});
+$('#btnUseElsewhere').onclick = e => withBusy(e.currentTarget, 'pick-game', '', async () => {
+  const r = await act('game', { path: STATE.game.elsewhere });
   if (r && r !== true) toast('Game folder: ' + r);
 });
 $('#btnOpenGame').onclick = () => reveal({ what: 'game' });

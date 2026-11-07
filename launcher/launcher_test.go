@@ -507,7 +507,7 @@ func TestAddZipWithVersions(t *testing.T) {
 		t.Fatal("wrong files")
 	}
 	// adding the other one later replaces Red: it is the same mod in another colour
-	res, err = addFromPaths(g, []string{z}, []string{"pak:blue"})
+	res, err = addFromPaths(g, []string{z}, []string{"Su-57 Liveries v3|pak:blue"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -77,7 +77,7 @@ var (
 )
 
 // errNoBundle: nothing to install from.
-var errNoBundle = errors.New("UE4SS and the Mod Loader aren't in the game yet. Copy the Game folder from the Mod Loader download into the ACE COMBAT 8 folder (let it merge the folders), or unzip the Mod Loader download next to the launcher's folder, then press Install on the Play page")
+var errNoBundle = errors.New("UE4SS and the Mod Loader aren't in the game yet. Copy the Game folder from the Mod Loader download into the ACE COMBAT 8 folder (let it merge the folders), or unzip the Mod Loader download next to the launcher's folder, then press Set up modding on the Play page")
 
 var (
 	reLoaderVersion = regexp.MustCompile(`(\d+\.\d+\.\d+)-ac8-`)
@@ -214,7 +214,7 @@ func (g Game) setup() (SetupResult, error) {
 	updateLoader := st.Loader == "" || st.CanUpdate
 	bd := bundleDir()
 	if !isFile(join(g.ue4ssRoot(), "UE4SS.dll")) && !isFile(join(bd, "Game", "Binaries", "Win64", "ue4ss", "UE4SS.dll")) {
-		return res, errors.New("UE4SS.dll is missing from the Mod Loader download (in " + filepath.Base(bd) + "\\Game\\Binaries\\Win64\\ue4ss), so nothing was set up. Antivirus programs sometimes remove it: restore it from your antivirus's quarantine, or unzip the Mod Loader download again, then press Install again")
+		return res, errors.New("UE4SS.dll is missing from the Mod Loader download (in " + filepath.Base(bd) + "\\Game\\Binaries\\Win64\\ue4ss), so nothing was set up. Antivirus programs sometimes remove it: restore it from your antivirus's quarantine, or unzip the Mod Loader download again, then press Set up modding again")
 	}
 	err := filepath.Walk(bd, func(p string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -258,7 +258,7 @@ func (g Game) setup() (SetupResult, error) {
 	logf("setup: installed %d files, kept %v", len(res.Installed), res.Kept)
 	if missing := g.setupMissing(); len(missing) > 0 {
 		logf("setup: still missing %v", missing)
-		return res, errors.New("modding is not set up yet: " + strings.Join(missing, ", ") + " is missing in the game. Antivirus programs sometimes remove these files: restore them from your antivirus's quarantine, or unzip the Mod Loader download again, then press Install again")
+		return res, errors.New("modding is not set up yet: " + strings.Join(missing, ", ") + " is missing in the game. Antivirus programs sometimes remove these files: restore them from your antivirus's quarantine, or unzip the Mod Loader download again, then press Set up modding again")
 	}
 	return res, nil
 }
@@ -288,10 +288,14 @@ type incoming struct {
 	mtime time.Time
 }
 
+// AddChoice is one version the player can pick. Its ID starts with its
+// download's name ("<source>|…"), so the picks for two downloads added together
+// can't be mixed up.
 type AddChoice struct {
-	ID    string   `json:"id"`
-	Name  string   `json:"name"`
-	Files []string `json:"files"`
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	Files  []string `json:"files"`
+	Source string   `json:"source"`
 }
 
 type AddResult struct {
@@ -1281,9 +1285,46 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 	return res, nil
 }
 
+// versionChoices is the "Which version?" question a download needs, if any,
+// without adding anything. When several downloads are added together, all of
+// them are asked about first, so none is added before the player has chosen.
+func (g Game) versionChoices(source string, files []incoming) []AddChoice {
+	at, err := g.addPlaces()
+	if err != nil {
+		return nil
+	}
+	units, res, err := g.planAdd(source, files, at)
+	if err != nil || res.SkinStudio || len(units) == 0 {
+		return nil
+	}
+	_, ch := pickVersions(units, nil, source)
+	return ch
+}
+
 // pickVersions offers a choice when a download holds several versions of one
 // mod, and keeps only the one the player picked.
 func pickVersions(units []*unit, pick []string, source string) ([]*unit, []AddChoice) {
+	units, ch := pickVersionsIn(units, picksFor(pick, source), source)
+	for i := range ch {
+		ch[i].ID, ch[i].Source = source+"|"+ch[i].ID, source
+	}
+	return units, ch
+}
+
+// picksFor keeps the picks meant for this download, without the "<source>|"
+// in front. nil when none are: nothing was picked for it, so a download
+// without versions is added whole and one with versions is asked about.
+func picksFor(pick []string, source string) []string {
+	var mine []string
+	for _, p := range pick {
+		if strings.HasPrefix(p, source+"|") {
+			mine = append(mine, strings.TrimPrefix(p, source+"|"))
+		}
+	}
+	return mine
+}
+
+func pickVersionsIn(units []*unit, pick []string, source string) ([]*unit, []AddChoice) {
 	want := map[string]bool{}
 	for _, p := range pick {
 		want[p] = true

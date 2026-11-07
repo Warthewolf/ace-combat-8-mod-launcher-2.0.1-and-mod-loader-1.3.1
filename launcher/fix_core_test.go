@@ -246,7 +246,7 @@ func TestCoreSlowGameStart(t *testing.T) {
 	}
 	time.Sleep(1500 * time.Millisecond)
 	setRunning(t, "AceCombat8.exe")
-	waitFor(t, 3*time.Second, func() bool { L := currentLaunch(); return L.SawGame && !L.Waiting })
+	waitFor(t, 3*time.Second, func() bool { L := currentLaunch(); return L.SawGame && !L.Waiting && !L.GaveUp })
 	setRunning(t)
 	waitFor(t, 4*time.Second, func() bool { return currentLaunch().GameEnded })
 
@@ -256,7 +256,7 @@ func TestCoreSlowGameStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 3*time.Second, func() bool { L := currentLaunch(); return !L.Waiting })
-	if L := currentLaunch(); L.SawGame || L.GameEnded {
+	if L := currentLaunch(); L.SawGame || L.GameEnded || !L.GaveUp {
 		t.Fatalf("%+v", L)
 	}
 }
@@ -568,7 +568,7 @@ func TestCoreAddWarningsAndMessages(t *testing.T) {
 	}
 
 	g2 := newGame(t)
-	if _, err := g2.setup(); err != errNoBundle || !strings.HasSuffix(err.Error(), "next to the launcher's folder, then press Install on the Play page") {
+	if _, err := g2.setup(); err != errNoBundle || !strings.HasSuffix(err.Error(), "next to the launcher's folder, then press Set up modding on the Play page") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -657,15 +657,15 @@ func TestCoreVersionNamedAfterDownload(t *testing.T) {
 	if err != nil || len(res.Choices) != 2 || res.Choices[1].Name != "Red" {
 		t.Fatalf("%+v %v", res, err)
 	}
-	res, err = addFromPaths(g, []string{d}, []string{"pak:red"})
+	res, err = addFromPaths(g, []string{d}, []string{"TwoVersions|pak:red"})
 	if err != nil || !reflect.DeepEqual(res.Added, []string{"TwoVersions - Red"}) {
 		t.Fatalf("%+v %v", res, err)
 	}
-	res, err = addFromPaths(g, []string{d}, []string{"pak:red"})
+	res, err = addFromPaths(g, []string{d}, []string{"TwoVersions|pak:red"})
 	if err != nil || !reflect.DeepEqual(res.Updated, []string{"TwoVersions - Red"}) || len(res.Added) != 0 {
 		t.Fatalf("again: %+v %v", res, err)
 	}
-	res, err = addFromPaths(g, []string{dl("TwoVersions v2", "red v2")}, []string{"pak:red"})
+	res, err = addFromPaths(g, []string{dl("TwoVersions v2", "red v2")}, []string{"TwoVersions v2|pak:red"})
 	if err != nil || !reflect.DeepEqual(res.Updated, []string{"TwoVersions - Red"}) {
 		t.Fatalf("newer download: %+v %v", res, err)
 	}
@@ -677,7 +677,7 @@ func TestCoreVersionNamedAfterDownload(t *testing.T) {
 		t.Fatalf("mods %q", got)
 	}
 	// the other version replaces it
-	res, err = addFromPaths(g, []string{d}, []string{"pak:blue"})
+	res, err = addFromPaths(g, []string{d}, []string{"TwoVersions|pak:blue"})
 	if err != nil || !strings.Contains(strings.Join(res.Notes, " "), "The older copy in TwoVersions - Red was replaced") {
 		t.Fatalf("%+v %v", res, err)
 	}

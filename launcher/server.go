@@ -634,7 +634,7 @@ func buildState() State {
 func uploadsDir() string { return join(dataDir, "uploads") }
 
 // maxUpload: a drop bigger than this is not a mod (the game's own folder is
-// tens of GB). Add mod… and Add folder… read a very big mod where it is.
+// tens of GB). Add a mod… and Add unzipped folder… read a very big mod where it is.
 var maxUpload int64 = 16 << 30
 
 var errUploadTooBig = errors.New("upload too big")
@@ -644,7 +644,7 @@ func uploadTooBig(n int64) error {
 	if n > 0 {
 		size = gb(n)
 	}
-	return fmt.Errorf("what you dropped is %s, which is far too big for a mod. Drop only the mod you downloaded, not the game's folder. For a very big mod, use Add mod… or Add folder… instead", size)
+	return fmt.Errorf("what you dropped is %s, which is far too big for a mod. Drop only the mod you downloaded, not the game's folder. For a very big mod, use Add a mod… or Add unzipped folder… on the Mods page instead", size)
 }
 
 func gb(n int64) string { return fmt.Sprintf("%.1f GB", float64(n)/(1<<30)) }
@@ -853,6 +853,11 @@ func addFromPaths(g Game, paths []string, pick []string) (AddResult, error) {
 	if len(paths) == 0 {
 		return AddResult{}, errors.New("nothing to add")
 	}
+	// a typed path (no file chooser on this computer) may have quotes or "~/"
+	paths = append([]string(nil), paths...)
+	for i, p := range paths {
+		paths[i] = expandHome(strings.Trim(strings.TrimSpace(p), `"'`))
+	}
 	for _, p := range paths {
 		// A mod is added from where it was downloaded. Adding something that is
 		// already in the game (or in the launcher's storage) would move it onto itself.
@@ -871,12 +876,21 @@ func addFromPaths(g Game, paths []string, pick []string) (AddResult, error) {
 		all.Choices = append(all.Choices, r.Choices...)
 		all.SkinStudio = all.SkinStudio || r.SkinStudio
 	}
-	// the game's own Paks (or whole) folder is not a mod
-	add := func(source, what string, files []incoming) (AddResult, error) {
-		if f := gameOwnFile(g, files); f != "" {
-			return AddResult{}, errGameFiles(what, f)
+	// Each download is read first and added after: so the game's own files are
+	// refused, and several downloads' versions asked about, before anything is added.
+	type download struct {
+		source, what string
+		files        []incoming
+	}
+	var downloads []download
+	var closers []func()
+	defer func() {
+		for _, c := range closers {
+			c()
 		}
-		return g.addMods(source, files, pick)
+	}()
+	queue := func(source, what string, files []incoming) {
+		downloads = append(downloads, download{source, what, files})
 	}
 	var loose []incoming
 	looseName, pakName := "", ""
@@ -893,22 +907,14 @@ func addFromPaths(g Game, paths []string, pick []string) (AddResult, error) {
 			if err != nil {
 				return all, err
 			}
-			r, err := add(filepath.Base(p), filepath.Base(p), files)
-			if err != nil {
-				return all, err
-			}
-			merge(r)
+			queue(filepath.Base(p), filepath.Base(p), files)
 		case ext == ".zip":
 			files, closer, err := readZip(p)
 			if err != nil {
 				return all, err
 			}
-			r, err := add(strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)), filepath.Base(p), files)
-			closer()
-			if err != nil {
-				return all, err
-			}
-			merge(r)
+			closers = append(closers, closer)
+			queue(strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)), filepath.Base(p), files)
 		case ext == ".7z" || ext == ".rar":
 			return all, errors.New(filepath.Base(p) + " is a " + ext + " archive. Unpack it first (for example with 7-Zip), then add the folder that comes out")
 		default:
@@ -948,7 +954,25 @@ func addFromPaths(g Game, paths []string, pick []string) (AddResult, error) {
 				}
 			}
 		}
-		r, err := add(looseName, "What you chose", loose)
+		queue(looseName, "What you chose", loose)
+	}
+	// the game's own Paks (or whole) folder is not a mod
+	for _, d := range downloads {
+		if f := gameOwnFile(g, d.files); f != "" {
+			return AddResult{}, errGameFiles(d.what, f)
+		}
+	}
+	if pick == nil && len(downloads) > 1 {
+		var ch []AddChoice
+		for _, d := range downloads {
+			ch = append(ch, g.versionChoices(d.source, d.files)...)
+		}
+		if len(ch) > 0 {
+			return AddResult{Choices: ch}, nil
+		}
+	}
+	for _, d := range downloads {
+		r, err := g.addMods(d.source, d.files, pick)
 		if err != nil {
 			return all, err
 		}
@@ -995,6 +1019,14 @@ func supportReport() string {
 	}
 	if st.Run != nil {
 		fmt.Fprintf(&b, "\nLast game start (%s): %s %s\n", st.Run.When.Format("2006-01-02 15:04"), st.Run.State, st.Run.Summary)
+		for _, p := range st.Run.Problems {
+			fmt.Fprintf(&b, "  Mod Loader: %s\n", p)
+		}
+	}
+	if st.ScriptRun != nil {
+		for _, p := range st.ScriptRun.Problems {
+			fmt.Fprintf(&b, "  UE4SS: %s\n", p)
+		}
 	}
 	if g, ok := currentGame(); ok {
 		if lb, err := os.ReadFile(join(g.loaderDir(), "AC8IoStoreLoader.log")); err == nil {
