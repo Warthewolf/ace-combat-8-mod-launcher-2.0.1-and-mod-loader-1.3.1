@@ -1,8 +1,10 @@
 package main
 
 // UE4SS script mods (Lua or C++), such as RoGLaser, SkinSlotText or SkyLive.
-// UE4SS starts a mod when its folder has enabled.txt or mods.txt says "Name : 1";
-// "Name : 0" in mods.txt switches it off.
+// UE4SS (3.0.1) names each mod after its folder, without what comes after the
+// last dot ("AC8.Stonehenge" runs as "AC8"). It starts a mod when mods.txt says
+// "Name : 1" for exactly that name, and also every mod whose folder has
+// enabled.txt, even when mods.txt says "Name : 0".
 
 import (
 	"bufio"
@@ -13,14 +15,17 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
 
 type ScriptMod struct {
-	Name        string     `json:"name"`
+	Name        string     `json:"name"`      // the folder's name
+	UE4SSName   string     `json:"ue4ssName"` // the name UE4SS gives it, in its log and in mods.txt
 	Path        string     `json:"path"`
 	Enabled     bool       `json:"enabled"`
 	Kind        string     `json:"kind"`
 	Description string     `json:"description,omitempty"`
+	Mtime       time.Time  `json:"mtime"` // newest of the folder and its main file
 	Added       *time.Time `json:"added,omitempty"`
 	Updated     *time.Time `json:"updated,omitempty"`
 }
@@ -29,17 +34,50 @@ var notScriptMods = []string{"IoStoreLoaderMod", "shared", "removed-mods"}
 
 var reModsTxt = regexp.MustCompile(`^\s*([^:;]+?)\s*:\s*([01])\s*$`)
 
-// modsTxtState reads mods.txt: name (lower case) -> on/off.
-func modsTxtState(modsDir string) map[string]bool {
+// ue4ssName is the name UE4SS gives the mod in folder dir: the folder's name
+// without its last extension, like C++'s path::stem() ("AC8.Stonehenge" ->
+// "AC8"; a name that starts with its only dot stays whole).
+func ue4ssName(dir string) string {
+	if i := strings.LastIndex(dir, "."); i > 0 {
+		return dir[:i]
+	}
+	return dir
+}
+
+// ue4ssModsTxt reads mods.txt the way UE4SS 3.0.1 does: a line with ';' and a
+// line of 4 characters or fewer is skipped, every space is removed, the name
+// is what comes before the first ':' and matches a mod's name exactly (case
+// too), and the mod is on when what comes after the last ':' starts with 1.
+// The result is name -> on; a name on several lines is on when any says 1.
+func ue4ssModsTxt(modsDir string) map[string]bool {
 	out := map[string]bool{}
 	b, err := os.ReadFile(join(modsDir, "mods.txt"))
 	if err != nil {
 		return out
 	}
 	for _, line := range strings.Split(decodeText(b), "\n") {
-		if m := reModsTxt.FindStringSubmatch(strings.TrimRight(line, "\r")); m != nil {
-			out[strings.ToLower(m[1])] = m[2] == "1"
+		line = strings.TrimRight(line, "\r")
+		if strings.Contains(line, ";") || len(utf16.Encode([]rune(line))) <= 4 {
+			continue
 		}
+		line = strings.ReplaceAll(line, " ", "")
+		i := strings.Index(line, ":")
+		if i < 0 {
+			continue
+		}
+		name := line[:i]
+		out[name] = out[name] || strings.HasPrefix(line[strings.LastIndex(line, ":")+1:], "1")
+	}
+	return out
+}
+
+// modsTxtState reads mods.txt like ue4ssModsTxt, by name in lower case, for
+// callers that compare without case.
+func modsTxtState(modsDir string) map[string]bool {
+	out := map[string]bool{}
+	for name, on := range ue4ssModsTxt(modsDir) {
+		k := strings.ToLower(name)
+		out[k] = out[k] || on
 	}
 	return out
 }
@@ -47,7 +85,7 @@ func modsTxtState(modsDir string) map[string]bool {
 func listScriptMods(ue4ssRoot string) []*ScriptMod {
 	modsDir := join(ue4ssRoot, "Mods")
 	ents, _ := os.ReadDir(modsDir)
-	txt := modsTxtState(modsDir)
+	txt := ue4ssModsTxt(modsDir)
 	var out []*ScriptMod
 	for _, e := range ents {
 		if !e.IsDir() {
@@ -63,11 +101,13 @@ func listScriptMods(ue4ssRoot string) []*ScriptMod {
 			continue
 		}
 		dir := join(modsDir, e.Name())
-		lua, dll := isFile(join(dir, "Scripts", "main.lua")), isFile(join(dir, "dlls", "main.dll"))
+		// UE4SS on Windows, and under Wine on Linux, finds these in any case
+		luaPath, dllPath := foldPath(dir, "Scripts", "main.lua"), foldPath(dir, "dlls", "main.dll")
+		lua, dll := luaPath != "" && isFile(luaPath), dllPath != "" && isFile(dllPath)
 		if !lua && !dll {
 			continue
 		}
-		m := &ScriptMod{Name: e.Name(), Path: dir}
+		m := &ScriptMod{Name: e.Name(), UE4SSName: ue4ssName(e.Name()), Path: dir}
 		switch {
 		case lua && dll:
 			m.Kind = "Lua + C++"
@@ -76,11 +116,14 @@ func listScriptMods(ue4ssRoot string) []*ScriptMod {
 		default:
 			m.Kind = "C++"
 		}
-		on, listed := txt[strings.ToLower(e.Name())]
-		hasEnabled := isFile(join(dir, "enabled.txt"))
-		m.Enabled = (listed && on) || (hasEnabled && !(listed && !on))
+		m.Enabled = isFileFold(dir, "enabled.txt") || txt[m.UE4SSName]
+		for _, p := range []string{dir, luaPath, dllPath} {
+			if st, err := os.Stat(p); p != "" && err == nil && st.ModTime().After(m.Mtime) {
+				m.Mtime = st.ModTime()
+			}
+		}
 		if lua {
-			m.Description = luaDescription(join(dir, "Scripts", "main.lua"))
+			m.Description = luaDescription(luaPath)
 		}
 		out = append(out, m)
 	}
@@ -130,6 +173,13 @@ func setScriptMod(ue4ssRoot, name string, on bool) error {
 		return errors.New("that script mod is no longer there")
 	}
 	en, off := join(mod.Path, "enabled.txt"), join(mod.Path, "enabled.off")
+	// one that is already there in other capitals is used, not doubled
+	if p := foldPath(mod.Path, "enabled.txt"); p != "" {
+		en = p
+	}
+	if p := foldPath(mod.Path, "enabled.off"); p != "" {
+		off = p
+	}
 	if on {
 		if !isFile(en) {
 			if isFile(off) {
