@@ -2,7 +2,7 @@
 
 | Guide | For |
 |---|---|
-| [Getting started on Windows](getting-started-windows.md) | Players on Windows: install, switch, play |
+| [Getting started on Windows](getting-started-windows.md) | Players on Windows: set up, add mods, switch, play |
 | [Linux and Steam Deck](linux-and-steam-deck.md) | Players on Linux or the Steam Deck |
 | [Managing mods](managing-mods.md) | Adding, removing, load order, script mods |
 | [Troubleshooting](troubleshooting.md) | When something doesn't work, and what the Mod Loader's log means |

@@ -1,4 +1,4 @@
-# ACE8 Mod Launcher 2.0.1 and Mod Loader 1.3.1
+# ACE8 Mod Launcher and AC8 Mod Loader
 
 Source code for the ACE8 Mod Launcher (Windows and Linux / Steam Deck) and the
 AC8 Mod Loader (IoStoreLoaderMod) for Ace Combat 8 on PC.
@@ -10,7 +10,9 @@ AC8 Mod Loader (IoStoreLoaderMod) for Ace Combat 8 on PC.
   `*_P.pak` mods (text, fonts and other files the game keeps in `.pak` files).
 
 Ready-to-use downloads are on the [Releases](https://github.com/Warthewolf/ace-combat-8-mod-launcher-2.0.1-and-mod-loader-1.3.1/releases) page. Players don't
-need anything in this repository.
+need anything in this repository: unzip the download, keep its two folders side
+by side, and start the launcher. The first time, a short tour shows you around;
+the launcher's Help page has a Quick start.
 
 ## Documentation
 

@@ -1,8 +1,24 @@
 # Troubleshooting
 
-Start with **Settings → Copy support report** and paste it into your message to
-@voidcallsreaper on Discord. It has your setup, mods and the latest logs, with
-your user name left out.
+The launcher's **Help** page has the usual fixes. To ask for help, press
+**Copy support report** (in **Settings → Support**, or **Help → Getting help**)
+and paste it into your message to @voidcallsreaper on Discord. It has your setup,
+mods and the latest logs, with your user name left out.
+
+## Set up modding isn't there
+
+The Play page shows **Open the game folder** instead of **Set up modding** when
+the launcher can't find the Mod Loader folder (`War’s Mod Loader <loader>`) next
+to its own folder.
+
+- Put the two folders from the download side by side again, as they come out of
+  the zip. If the button still doesn't show, close the launcher and start it
+  again.
+- Or set it up by hand: copy the `Game` folder from the Mod Loader folder into
+  the `ACE COMBAT 8` folder and let it merge the folders. The launcher notices by
+  itself.
+
+If the Play page says **Mod Loader is off**, press **Switch it on**.
 
 ## The game doesn't start, or crashes, while Modded
 
@@ -17,7 +33,8 @@ your user name left out.
 
 | Last game start says | What to do |
 |---|---|
-| Not loaded: "Added after that start" | Start the game again |
+| Not loaded: "Added after that start" or "Updated after that start" | Start the game again |
+| The mod isn't in the list | It's switched off on the Mods page: switch it on |
 | Not loaded, another mod changes the same file | Move the one you want lower in the list |
 | "The .ucas file is missing" | Copy the `.ucas` next to the `.utoc` |
 | "Game version not supported" | The game was updated: see [After a game update](game-updates.md) |
@@ -27,7 +44,9 @@ your user name left out.
 | UE4SS: `[Lua] … error …` | The script mod has a bug or needs a newer UE4SS; tell its author |
 
 Also: on Windows, a Modded game started with **Steam's** Play button has anti-cheat
-on and no mods. Use the launcher's Play.
+on and no mods. Use the launcher's **Play modded**. On Linux, Steam needs the
+launcher's line in its launch options: see
+[Linux and Steam Deck](linux-and-steam-deck.md#the-steam-launch-options-line).
 
 ## What the Mod Loader's log lines mean
 
@@ -54,12 +73,13 @@ starts while Modded. It covers pak mods only; script mods are in `ue4ss\UE4SS.lo
 Close the game, Explorer windows showing the game's folders, editors (VS Code,
 Notepad++) and command windows, then switch again. The launcher moves what it can
 around a folder that is held open, so this is rare. If a switch stops halfway,
-the Play page shows **Finish switching** with buttons for either mode.
+the Play page shows **Finish switching**: press **Make it Modded** or
+**Make it Unmodded**. Nothing is lost.
 
 ## The launcher shows old information or an old version
 
-Look at the version under the menu. If it's older than the exe you started, the
-old launcher was still open. Since 2.0.1 a newer launcher closes an older one by
+Look at the version at the bottom of the menu. If it's older than the exe you
+started, the old launcher was still open. Since 2.0.1 a newer launcher closes an older one by
 itself; for older versions, close the launcher window and start the new one.
 
 ## Antivirus warnings
@@ -89,5 +109,6 @@ for all users**).
 
 ## Microsoft Visual C++ runtime
 
-UE4SS needs the Visual C++ 2015–2022 runtime (x64). The launcher tells you if it's
-missing and links to Microsoft's download.
+UE4SS needs the Visual C++ 2015–2022 runtime (x64). If it's missing, the Play
+page says **One Microsoft install needed**: press **Download from Microsoft**,
+open `VC_redist.x64.exe` and press **Install**.
