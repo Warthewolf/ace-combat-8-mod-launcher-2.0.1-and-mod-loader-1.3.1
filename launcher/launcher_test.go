@@ -171,7 +171,7 @@ func TestDiscoveryMatchesLoader(t *testing.T) {
 	for _, m := range mods {
 		switch m.Key {
 		case "NoCas":
-			if m.Loads != 0 || !strings.Contains(m.Containers[0].Skip, "n.ucas is missing") {
+			if m.Loads != 0 || !strings.Contains(m.Containers[0].Skip, "is missing (n.ucas)") {
 				t.Errorf("NoCas: %+v", m.Containers[0])
 			}
 		case `~mods\Old Download`:
@@ -1331,7 +1331,7 @@ func TestPakModsMatchLoader131(t *testing.T) {
 		if m.Key == "Both" && (len(m.Containers) != 1 || m.Containers[0].Name != "B_P.pak") {
 			t.Fatalf("Both: %+v", m.Containers)
 		}
-		if m.Key == "NoCas_P.pak" && !strings.Contains(m.Containers[0].Skip, "NoCas_P.ucas is missing") {
+		if m.Key == "NoCas_P.pak" && !strings.Contains(m.Containers[0].Skip, "is missing (NoCas_P.ucas)") {
 			t.Fatalf("NoCas: %q", m.Containers[0].Skip)
 		}
 	}
@@ -1396,13 +1396,15 @@ func TestPakLog131(t *testing.T) {
 	if r := ri.Mods["pakplanfixture_26476"]; r == nil || r.Loaded != 5 || r.Failed != 1 {
 		t.Fatalf("fixture %+v", r)
 	}
-	if ri.Mounted != 6 || ri.Total != 7 || ri.State != "problems" {
+	// The total also counts the two files the Mod Loader skipped though they were
+	// switched on: Missing_P (no .ucas) and Seen_P. Seen_P is in the Mod Loader's
+	// folder, so "already present in the native mount table" means another file
+	// with that name was loaded instead (the loader compares file names).
+	if ri.Mounted != 6 || ri.Total != 9 || ri.State != "problems" {
 		t.Fatalf("summary %d/%d %s", ri.Mounted, ri.Total, ri.State)
 	}
-	for _, p := range ri.Problems {
-		if strings.Contains(p, "native mount table") {
-			t.Fatalf("not a problem: %s", p)
-		}
+	if len(ri.Problems) != 2 || !strings.Contains(ri.Problems[0], "Missing_P.pak was not loaded") || !strings.Contains(ri.Problems[1], "Seen_P.pak was not loaded") {
+		t.Fatalf("problems %q", ri.Problems)
 	}
 }
 
@@ -1508,7 +1510,7 @@ func TestScriptRunLog(t *testing.T) {
 	}
 	sr = parseScriptRun("[x] Starting mods (from mods.txt load order)...\n[x] Starting Lua mod 'SkyLive'\n[x] Starting C++ mod 'RoGLaser'\n" +
 		"[x] [Lua] [SkyLive] error: main.lua:3: attempt to index a nil value\n")
-	if sr == nil || !sr.Started["skylive"] || !sr.Started["roglaser"] || len(sr.Problems) != 1 || !strings.HasPrefix(sr.Problems[0], "[Lua]") {
+	if sr == nil || !sr.Started["skylive"] || !sr.Started["roglaser"] || len(sr.Problems) != 1 || !strings.HasPrefix(sr.Problems[0], "SkyLive has an error") || !strings.Contains(sr.Problems[0], "([Lua] [SkyLive] error: main.lua:3") {
 		t.Fatalf("%+v", sr)
 	}
 	if parseScriptRun("[x] Console created\n") != nil {

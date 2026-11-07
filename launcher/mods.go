@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,56 @@ import (
 )
 
 const maxSearchDepth = 6
+
+// foldPath finds dir\parts... the way Windows does, and Wine for the game on
+// Linux: exact first, then ignoring upper and lower case. "" when not there.
+// On Windows the exact look-up already ignores case, so nothing more is done.
+func foldPath(dir string, parts ...string) string {
+	p := dir
+	for _, part := range parts {
+		q := join(p, part)
+		if _, err := os.Stat(q); err == nil {
+			p = q
+			continue
+		}
+		if runtime.GOOS == "windows" {
+			return ""
+		}
+		ents, err := os.ReadDir(p)
+		if err != nil {
+			return ""
+		}
+		found := ""
+		for _, e := range ents {
+			if strings.EqualFold(e.Name(), part) {
+				found = e.Name()
+				break
+			}
+		}
+		if found == "" {
+			return ""
+		}
+		p = join(p, found)
+	}
+	return p
+}
+
+// isFileFold: a file at dir\parts..., in any case (see foldPath).
+func isFileFold(dir string, parts ...string) bool {
+	p := foldPath(dir, parts...)
+	return p != "" && isFile(p)
+}
+
+// sibling is the file next to p with the same name and extension ext, in any
+// case (see foldPath); "" when there is none.
+func sibling(p, ext string) string {
+	dir, name := filepath.Split(p)
+	s := foldPath(filepath.Clean(dir), strings.TrimSuffix(name, filepath.Ext(name))+ext)
+	if s == "" || !isFile(s) {
+		return ""
+	}
+	return s
+}
 
 var skipDirs = []string{"dlls", "scripts", "source", "build", "packed", "export",
 	"backup", "backups", "old", "disabled", "removed-mods"}
@@ -70,7 +121,7 @@ func isPakSidecar(path string) bool {
 	if !strings.HasSuffix(strings.ToLower(path), "_p.utoc") {
 		return false
 	}
-	return isFile(strings.TrimSuffix(path, filepath.Ext(path)) + ".pak")
+	return sibling(path, ".pak") != ""
 }
 
 // containerKey is the name two containers clash on: the .utoc name (a .pak and
@@ -159,6 +210,10 @@ type Container struct {
 	Skip  string    `json:"skip,omitempty"` // why the loader will not mount it
 	Files []string  `json:"files,omitempty"`
 	ids   map[uint64]bool
+	// native: a *_P.pak in ~mods. The game mounts those itself (with the Mod
+	// Loader's .pak hook in place), whatever loadorder.txt says, and before the
+	// Mod Loader mounts its mods.
+	native bool
 }
 
 func collectUtoc(dir string, depth int, paks bool, out *[]*Container) {
@@ -286,6 +341,9 @@ func scanPakMods(loaderDir, tildeDir string) (mods []*PakMod, staleEntries []str
 		}
 	}
 	for _, m := range mods {
+		for _, c := range m.Containers {
+			c.native = paks && m.Where == "tilde" && isPakName(c.Name)
+		}
 		describeMod(m)
 	}
 	checkContainers(mods)
@@ -295,14 +353,15 @@ func scanPakMods(loaderDir, tildeDir string) (mods []*PakMod, staleEntries []str
 // checkContainers marks what the loader will skip among the mods that are on:
 // a second container with the same name (the newer copy wins; a .pak and its
 // .utoc count as one name) and a .utoc without its .ucas. A .pak needs a .ucas
-// only when it comes with a .utoc.
+// only when it comes with a .utoc. A .pak the game loads from ~mods by itself
+// is loaded first, also when it is switched off, so it wins a name clash.
 func checkContainers(mods []*PakMod) {
 	var plan []*Container
 	owner := map[*Container]*PakMod{}
 	for _, m := range mods {
 		for _, c := range m.Containers {
 			c.Skip = ""
-			if m.Enabled {
+			if m.Enabled || c.native {
 				plan = append(plan, c)
 				owner[c] = m
 			}
@@ -320,20 +379,28 @@ func checkContainers(mods []*PakMod) {
 			if d.Mtime.After(c.Mtime) {
 				older, newer = c, d
 			}
-			older.Skip = "Not loaded: " + owner[newer].Key + " has a newer copy of " + newer.Name + ", and only one can load."
+			switch {
+			case c.native != d.native:
+				older, newer = d, c
+				if d.native {
+					older, newer = c, d
+				}
+				older.Skip = "Won't load: the game already loads a file with the same name (" + newer.Name + ") from " + owner[newer].Key + " by itself, and only one can load. Remove the copy you don't want."
+			default:
+				older.Skip = "Won't load: " + owner[newer].Key + " has a newer copy of this file (" + newer.Name + "), and only one can load. Remove the copy you don't want."
+			}
 			if older == c {
 				break
 			}
 		}
 	}
 	for _, c := range plan {
-		base := strings.TrimSuffix(c.Path, filepath.Ext(c.Path))
-		if isPakName(c.Name) && !isFile(base+".utoc") {
+		if isPakName(c.Name) && sibling(c.Path, ".utoc") == "" {
 			continue // a .pak on its own
 		}
-		if c.Skip == "" && !isFile(base+".ucas") {
+		if c.Skip == "" && sibling(c.Path, ".ucas") == "" {
 			base := strings.TrimSuffix(c.Name, filepath.Ext(c.Name))
-			c.Skip = "Not loaded: " + base + ".ucas is missing next to " + c.Name + "."
+			c.Skip = "Won't load: part of this mod is missing (" + base + ".ucas). Download it again, or ask its author for the full files."
 		}
 	}
 	for _, m := range mods {
@@ -349,22 +416,25 @@ func checkContainers(mods []*PakMod) {
 // describeMod fills in sizes, the files each container changes and Skin Studio details.
 func describeMod(m *PakMod) {
 	for _, c := range m.Containers {
-		base := strings.TrimSuffix(c.Path, filepath.Ext(c.Path))
 		for _, ext := range []string{".utoc", ".ucas", ".pak"} {
-			if st, err := os.Stat(base + ext); err == nil {
-				c.Size += st.Size()
+			if p := sibling(c.Path, ext); p != "" {
+				if st, err := os.Stat(p); err == nil {
+					c.Size += st.Size()
+				}
 			}
 		}
 		m.Size += c.Size
 		if c.Mtime.After(m.Mtime) {
 			m.Mtime = c.Mtime
 		}
-		if toc, err := readUtoc(base + ".utoc"); err == nil {
-			c.ids = toc.packageIDs()
-			c.Files = toc.assetNames()
+		if p := sibling(c.Path, ".utoc"); p != "" {
+			if toc, err := readUtoc(p); err == nil {
+				c.ids = toc.packageIDs()
+				c.Files = toc.assetNames()
+			}
 		}
 	}
-	if strings.EqualFold(m.Name, skinListName) || strings.EqualFold(m.Key, skinListName) {
+	if isSkinListKey(m.Key) {
 		m.SkinList = true
 	}
 	if !m.IsFile {
@@ -395,45 +465,125 @@ func describeMod(m *PakMod) {
 // loader will skip, two mods that change the same game files, and how the mod
 // did the last time the game started.
 func addModNotes(mods []*PakMod, run *RunInfo, mode string) {
-	type use struct {
-		mod *PakMod
-		c   *Container
-	}
-	byID := map[uint64][]use{}
-	for _, m := range mods {
+	// loaded: per package, each mod that changes it, and whether through a
+	// container the Mod Loader mounts (true) or only one the game loads itself
+	// from ~mods (false). A switched-off mod still counts for its ~mods .pak files.
+	loaded := map[uint64]map[*PakMod]bool{}
+	at := map[*PakMod]int{}
+	for i, m := range mods {
+		at[m] = i
 		m.Notes = []Note{}
-		if !m.Enabled {
-			continue
-		}
 		for _, c := range m.Containers {
+			if !m.Enabled && !c.native {
+				continue
+			}
 			if c.Skip != "" {
-				m.Notes = append(m.Notes, Note{"warn", c.Skip})
+				if m.Enabled {
+					m.Notes = append(m.Notes, Note{"warn", c.Skip})
+				}
 				continue
 			}
 			for id := range c.ids {
-				byID[id] = append(byID[id], use{m, c})
+				if loaded[id] == nil {
+					loaded[id] = map[*PakMod]bool{}
+				}
+				loaded[id][m] = loaded[id][m] || !c.native
 			}
 		}
+		if run != nil && m.Enabled {
+			for _, n := range run.notLoaded[strings.ToLower(m.Key)] {
+				shown := false
+				for _, c := range m.Containers {
+					if c.Skip != "" && strings.EqualFold(c.Name, n.file) {
+						shown = true // the launcher already says why
+					}
+				}
+				if !shown {
+					m.Notes = append(m.Notes, Note{"warn", n.text})
+				}
+			}
+		}
+		m.Notes = append(m.Notes, nativeNotes(m)...)
+		m.Notes = append(m.Notes, spaceNotes(m)...)
 	}
-	// conflicts: the mod that loads later wins
-	type pair struct{ a, b *PakMod }
-	shared := map[pair]int{}
-	for _, us := range byID {
-		for i := 0; i < len(us); i++ {
-			for k := i + 1; k < len(us); k++ {
-				if us[i].mod != us[k].mod {
-					shared[pair{us[i].mod, us[k].mod}]++
+
+	// Conflicts: two mods change the same game file and only one version shows.
+	// Between the Mod Loader's mods the one lower in the list loads later and
+	// wins. The game loads ~mods .pak files before the Mod Loader's mods, so
+	// those lose to any of them; between two of those the list doesn't decide.
+	type pair struct{ a, b *PakMod } // a is higher in the list
+	const (
+		laterWins  = iota // both through the Mod Loader: b loads later
+		aIsNative         // a only as a ~mods .pak: b wins
+		bIsNative         // b only as a ~mods .pak: a wins
+		bothNative        // both only as ~mods .pak files
+		outcomes
+	)
+	// shared counts each game file once per pair of mods, however many of
+	// their files carry it
+	shared := map[pair]*[outcomes]int{}
+	for _, by := range loaded {
+		var ms []*PakMod
+		for m := range by {
+			ms = append(ms, m)
+		}
+		sort.Slice(ms, func(i, j int) bool { return at[ms[i]] < at[ms[j]] })
+		for i := 0; i < len(ms); i++ {
+			for k := i + 1; k < len(ms); k++ {
+				a, b := ms[i], ms[k]
+				t := shared[pair{a, b}]
+				if t == nil {
+					t = &[outcomes]int{}
+					shared[pair{a, b}] = t
+				}
+				switch aLoader, bLoader := by[a], by[b]; {
+				case aLoader && bLoader:
+					t[laterWins]++
+				case bLoader:
+					t[aIsNative]++
+				case aLoader:
+					t[bIsNative]++
+				default:
+					t[bothNative]++
 				}
 			}
 		}
 	}
-	for p, n := range shared {
-		what := "1 game file is"
-		if n > 1 {
-			what = strconv.Itoa(n) + " game files are"
+	pairs := make([]pair, 0, len(shared))
+	for p := range shared {
+		pairs = append(pairs, p)
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if at[pairs[i].a] != at[pairs[j].a] {
+			return at[pairs[i].a] < at[pairs[j].a]
 		}
-		p.a.Notes = append(p.a.Notes, Note{"warn", what + " also changed by " + p.b.Key + ". That mod loads later, so its version is the one you see."})
-		p.b.Notes = append(p.b.Notes, Note{"info", what + " also changed by " + p.a.Key + ". This mod loads later, so its version is the one you see."})
+		return at[pairs[i].b] < at[pairs[j].b]
+	})
+	for _, p := range pairs {
+		for o, n := range shared[p] {
+			if n == 0 {
+				continue
+			}
+			what := "1 game file is"
+			if n > 1 {
+				what = strconv.Itoa(n) + " game files are"
+			}
+			switch o {
+			case laterWins:
+				p.a.Notes = append(p.a.Notes, Note{"warn", what + " also changed by " + p.b.Key + ". That mod loads later, so its version is the one you see."})
+				p.b.Notes = append(p.b.Notes, Note{"info", what + " also changed by " + p.a.Key + ". This mod loads later, so its version is the one you see."})
+			case aIsNative, bIsNative:
+				loser, winner := p.a, p.b
+				if o == bIsNative {
+					loser, winner = p.b, p.a
+				}
+				loser.Notes = append(loser.Notes, Note{"warn", what + " also changed by " + winner.Key + ". That mod's version is the one you see, because the game loads .pak files in ~mods before the Mod Loader's mods."})
+				winner.Notes = append(winner.Notes, Note{"info", what + " also changed by " + loser.Key + ". This mod's version is the one you see, because the game loads .pak files in ~mods before the Mod Loader's mods."})
+			case bothNative:
+				p.a.Notes = append(p.a.Notes, Note{"info", what + " also changed by " + p.b.Key + ". The game loads both from ~mods by itself, so their order here doesn't decide which version you see."})
+				p.b.Notes = append(p.b.Notes, Note{"info", what + " also changed by " + p.a.Key + ". The game loads both from ~mods by itself, so their order here doesn't decide which version you see."})
+			}
+		}
 	}
 	for _, m := range mods {
 		sort.SliceStable(m.Notes, func(i, j int) bool { return m.Notes[i].Kind == "warn" && m.Notes[j].Kind != "warn" })
@@ -443,6 +593,53 @@ func addModNotes(mods []*PakMod, run *RunInfo, mode string) {
 			}
 		}
 	}
+}
+
+// nativeNotes: a mod with .pak files in ~mods. The game loads those by itself,
+// so the switch and the load order don't change them; Remove does. The note
+// shows also when the mod is switched off, where it matters most.
+func nativeNotes(m *PakMod) []Note {
+	n := 0
+	for _, c := range m.Containers {
+		if c.native {
+			n++
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	these := "its .pak files"
+	if n == 1 && len(m.Containers) == 1 {
+		these = "it"
+	}
+	if !m.Enabled {
+		head := "Still loads"
+		if n < len(m.Containers) {
+			head = "Partly still loads"
+		}
+		return []Note{{"warn", head + ": the game loads .pak files in the ~mods folder by itself, so switching this off doesn't stop " + these + ". To stop " + these + ", use Remove."}}
+	}
+	return []Note{{"info", "The game loads .pak files in the ~mods folder by itself, so the switch and the place in this list don't change " + these + ". To stop " + these + ", use Remove."}}
+}
+
+// spaceNotes: a name that starts or ends with a space. loadorder.txt can't
+// hold such a name (the Mod Loader and the launcher both trim the spaces), so
+// the mod can't be switched off or moved. Names under ~mods\ only lose a space
+// at the end.
+func spaceNotes(m *PakMod) []Note {
+	starts := m.Where != "tilde" && strings.TrimLeft(m.Key, " \t") != m.Key
+	ends := strings.TrimRight(m.Key, " \t") != m.Key
+	if !starts && !ends {
+		return nil
+	}
+	what, where := "folder's", "starts"
+	if m.IsFile {
+		what = "file's"
+	}
+	if !starts {
+		where = "ends"
+	}
+	return []Note{{"warn", "Can't be switched off or moved: this " + what + " name " + where + " with a space. Rename it without the space (Show opens its folder)."}}
 }
 
 // decodeText reads UTF-8 (with or without BOM) or UTF-16 LE text.
@@ -477,6 +674,11 @@ func writeLoadOrder(loaderDir string, entries []orderEntry) error {
 		return err
 	}
 	p := join(loaderDir, "loadorder.txt")
+	if old, err := os.ReadFile(p); err == nil && string(old) == b.String() {
+		// Nothing changes: leave the file and its date alone, so the window,
+		// which watches that date, doesn't reload for nothing.
+		return nil
+	}
 	tmp := p + ".tmp"
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
 		return err
@@ -494,11 +696,29 @@ type orderEntry struct {
 func keepSkinListLast(entries []orderEntry) []orderEntry {
 	var rest, last []orderEntry
 	for _, e := range entries {
-		if strings.EqualFold(e.Key, skinListName) || strings.EqualFold(e.Key, `~mods\`+skinListName) {
+		if isSkinListKey(e.Key) {
 			last = append(last, e)
 		} else {
 			rest = append(rest, e)
 		}
 	}
 	return append(rest, last...)
+}
+
+// isSkinListKey: the load-order name of Skin Studio's skin list, as a folder
+// or as loose files, in the Mod Loader's folder or in ~mods:
+// "zz_SkinStudio_SkinList", "~mods\zz_SkinStudio_SkinList",
+// "zz_SkinStudio_SkinList.utoc", "zz_SkinStudio_SkinList_P.pak".
+func isSkinListKey(key string) bool {
+	k := strings.ReplaceAll(key, "/", `\`)
+	if len(k) > len(`~mods\`) && strings.EqualFold(k[:len(`~mods\`)], `~mods\`) {
+		k = k[len(`~mods\`):]
+	}
+	if ext := strings.ToLower(filepath.Ext(k)); ext == ".utoc" || ext == ".pak" {
+		k = k[:len(k)-len(ext)]
+	}
+	if len(k) > 2 && strings.EqualFold(k[len(k)-2:], "_P") {
+		k = k[:len(k)-2]
+	}
+	return strings.EqualFold(k, skinListName)
 }
