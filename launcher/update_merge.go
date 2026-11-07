@@ -31,9 +31,14 @@ import (
 // updatingSuffix marks an old copy set aside while its update is put in place.
 const updatingSuffix = ".ace8-updating"
 
+// incompleteSuffix marks, next to a mod folder, that its new copy is still going
+// in. Moving a folder file by file (when a program holds it) takes a while; if
+// the launcher is closed then, the folder holds only part of the new copy.
+const incompleteSuffix = ".ace8-incomplete"
+
 // sweepUpdating cleans up after a launcher that was closed in the middle of an
-// update: an old copy whose new one is in place is deleted; one whose new copy
-// never arrived is put back.
+// update: an old copy whose new one is all in place is deleted; one whose new
+// copy never arrived, or only arrived in part, is put back.
 func sweepUpdating(dirs ...string) {
 	for _, d := range dirs {
 		var walk func(dir string, depth int)
@@ -42,13 +47,13 @@ func sweepUpdating(dirs ...string) {
 			for _, e := range ents {
 				p := join(dir, e.Name())
 				if strings.HasSuffix(e.Name(), updatingSuffix) {
-					orig := strings.TrimSuffix(p, updatingSuffix)
-					if lexists(orig) {
-						os.RemoveAll(p)
-					} else {
-						moveItem(p, orig)
+					sweepOne(p)
+					continue
+				}
+				if strings.HasSuffix(e.Name(), incompleteSuffix) {
+					if !lexists(strings.TrimSuffix(p, incompleteSuffix) + updatingSuffix) {
+						os.Remove(p) // no old copy to go back to: the new one stays as it is
 					}
-					logf("cleaned up an unfinished update: %s", p)
 					continue
 				}
 				if e.IsDir() && depth > 0 {
@@ -56,8 +61,35 @@ func sweepUpdating(dirs ...string) {
 				}
 			}
 		}
-		walk(d, 1)
+		// deep enough for a file taken out of a pack ("Pack\Skin\Skin_P.utoc")
+		walk(d, maxSearchDepth)
 	}
+}
+
+// sweepOne deals with one old copy p left aside by an unfinished update.
+func sweepOne(p string) {
+	orig := strings.TrimSuffix(p, updatingSuffix)
+	marker := orig + incompleteSuffix
+	switch {
+	case lexists(orig) && lexists(marker):
+		// only part of the new copy went in (its files are still in the download):
+		// the complete old copy is the one to keep
+		if err := os.RemoveAll(orig); err != nil {
+			logf("could not take out the unfinished new copy %s: %v", orig, err)
+			return
+		}
+		if err := moveItem(p, orig); err != nil {
+			logf("could not put back %s: %v", orig, err)
+			return
+		}
+		os.Remove(marker)
+	case lexists(orig):
+		os.RemoveAll(p)
+	default:
+		moveItem(p, orig)
+		os.Remove(marker)
+	}
+	logf("cleaned up an unfinished update: %s", p)
 }
 
 // keepListName is the file a mod ships to name files the player's copy keeps.

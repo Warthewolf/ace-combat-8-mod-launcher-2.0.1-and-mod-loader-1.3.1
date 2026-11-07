@@ -660,7 +660,7 @@ func addFromPaths(g Game, paths []string, pick []string) (AddResult, error) {
 		all.SkinStudio = all.SkinStudio || r.SkinStudio
 	}
 	var loose []incoming
-	looseName := ""
+	looseName, pakName := "", ""
 	sort.Strings(paths)
 	for _, p := range paths {
 		st, err := os.Stat(p)
@@ -698,9 +698,18 @@ func addFromPaths(g Game, paths []string, pick []string) (AddResult, error) {
 			if ext == ".utoc" && looseName == "" {
 				looseName = strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
 			}
+			if isPakName(p) && pakName == "" {
+				pakName = strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
+			}
 		}
 	}
 	if len(loose) > 0 {
+		// loose files are named after their first .utoc, or *_P.pak (Mod Loader
+		// 1.3): one name for all of them would make every new mod look like an
+		// update of the last one
+		if looseName == "" {
+			looseName = pakName
+		}
 		if looseName == "" {
 			looseName = "New mod"
 		}
