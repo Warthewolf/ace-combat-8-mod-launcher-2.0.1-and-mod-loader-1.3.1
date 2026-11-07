@@ -1,4 +1,4 @@
-ACE8 Mod Launcher 2.0.4 for Linux and Steam Deck
+ACE8 Mod Launcher 2.1.0 for Linux and Steam Deck
 ================================================
 
 One window for modding Ace Combat 8: switch between Modded and Unmodded,

@@ -12,8 +12,8 @@ the launcher can't find the Mod Loader folder (`War’s Mod Loader <loader>`) ne
 to its own folder.
 
 - Put the two folders from the download side by side again, as they come out of
-  the zip. If the button still doesn't show, close the launcher and start it
-  again.
+  the zip. The button shows by itself within about 10 seconds; there's no need
+  to restart the launcher.
 - Or set it up by hand: copy the `Game` folder from the Mod Loader folder into
   the `ACE COMBAT 8` folder and let it merge the folders. The launcher notices by
   itself.

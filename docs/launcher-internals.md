@@ -43,14 +43,22 @@ system.
 1. The data folder is `%LOCALAPPDATA%\ACE8 Mod Launcher` (Windows) or
    `~/.local/share/ace8-mod-launcher` (Linux). It holds `settings.json`,
    `launcher.log` and `instance.json`.
-2. If `instance.json` points to a launcher that answers, and it is the **same
+2. A lock makes sure only one launcher goes on: a named mutex
+   (`Local\ACE8ModLauncher`) on Windows, `flock` on `instance.lock` in the data
+   folder on Linux. A second start that can't get it waits up to 8 s for the
+   first one's window and shows it.
+3. If `instance.json` points to a launcher that answers, and it is the **same
    build** (version plus a hash of the exe), that one's window is shown and the
-   new start ends. A **different build** is asked to quit (`/api/quit`, or the
-   process is stopped for launchers before 2.0.1) and the new one takes over,
-   unless the old one is in the middle of a switch or install.
-3. The server listens on a random free port; a random token is put in the window's
-   URL.
-4. When no window has been heard from for a while (each window pings every 20 s
+   new start ends. A **different build** is asked to quit (`/api/quit`) and the
+   new one takes over. A launcher that is busy (a switch or an install) says no
+   and is left alone; only launchers from before 2.0.1, which can't be asked,
+   are stopped.
+4. The server listens on a random free port; a random token is put in the window's
+   URL. On Linux the data folder is private to the user (0700) and
+   `instance.json` is 0600.
+5. Once the game is known, leftovers of an update that was cut short
+   (`<name>.ace8-updating`) are tidied up, as they are before each Play and switch.
+6. When no window has been heard from for a while (each window pings every 20 s
    and says "bye" when it closes), the launcher exits. It never exits during a
    switch or install.
 
@@ -79,6 +87,14 @@ with another `Host` header are refused, so web pages can't reach it.
 | `hello`, `ping`, `bye`, `quit` | Single instance and window presence |
 
 Actions that change files take the busy lock, so two never run at once.
+`settings` doesn't: it changes no mod files, so the window's settings save even
+while a switch runs. `settings.json` is written to a temporary file and renamed;
+the settings in memory only change once that worked.
+
+`upload` streams a drop straight into `uploads\<id>` in the data folder (no
+second copy in the temp folder), refuses more than 16 GB, stops as soon as the
+game's own files (`global.utoc`) arrive, and removes what it saved if anything
+fails. Leftover uploads are cleared at start-up and after 6 hours.
 
 ## The window
 
@@ -155,23 +171,57 @@ finish), none anywhere is "none".
 A switch:
 
 1. Refuses while the game is running.
-2. Writes `switch-journal.json` in the storage folder, then moves each item,
-   adding every finished step to the journal.
-3. If a step fails, it moves the finished steps back in reverse order; when that
-   works the journal is marked finished.
-4. A folder another program has open can't be renamed on Windows, so the move
+2. Deals with a switch that stopped part way (the launcher was closed, the PC
+   went off): going the same way, it carries on from `switch-journal.json`; going
+   the other way, it puts that switch's steps back first. A journal whose paths
+   are outside this game and its storage folder is kept aside as
+   `switch-journal (other folder).json` and not followed.
+3. Writes each step to the journal as pending before it moves the item, and
+   marks it done after. The journal is written to a temporary file and renamed.
+4. When an item is on both sides (a mod put into `~mods` by hand while
+   Unmodded, say), the two are **merged**, never one set aside whole. For a file
+   that is on both sides, the newer one stays (as the Mod Loader also picks the
+   newest of two same-named mods) and the other is kept in the item's
+   `(older copy …)` folder in the storage folder, never inside the game. The
+   `.utoc`, `.ucas` and `.pak` of one mod decide together. `dwmapi.dll` is a
+   single file: the one being switched in wins and the other is kept as
+   `dwmapi (older copy …).dll`.
+5. If a step fails, it moves the finished steps back in reverse order, taking each
+   off the journal as soon as it is back, and stops at the first that can't be
+   moved, so the journal lists exactly what is left for the next switch.
+6. A folder another program has open can't be renamed on Windows, so the move
    falls back to moving the folder's contents piece by piece.
-5. Across drives, files are copied (keeping their times), the original is renamed
-   aside, then deleted.
+7. Across drives, the copy is made in a temporary `.ace8-copying` folder and gets
+   its real name only when complete; then the original is renamed into
+   `.ace8-deleting` in one step and deleted. Both temporary folders sit next to
+   `Paks` or `ue4ss`, not inside them, so nothing half copied or half deleted is
+   ever loaded, and leftovers are swept at the next switch.
+
+On Linux, `~mods` and `LogicMods` are also found with other capital letters
+(`~Mods`), as the game under Proton would find them.
 
 ## The storage folder
 
 Default: `<game folder> - mod storage` next to the game, on the same drive, so
 switching is a rename. A chosen folder is kept per game in `settings.json`
 (`storageDir`, `storageGame`). Moving it carries `Switched off`, `Removed mods`
-and the journal along, and rewrites the paths in `removed.json` files. Actions
-that need it are refused while a chosen folder can't be found (a drive not
-connected).
+and the journal along, and rewrites the paths in `removed.json` files once the
+new settings are saved. Across drives, everything is copied first and the
+originals are deleted only after the settings are saved; a
+`.ace8-moving-here.json` note in the new folder lets a move that was cut short
+simply be tried again.
+
+Actions that need it are refused while a chosen folder can't be found (a drive
+not connected). Choosing a folder that holds the mods (the same folder under a
+new drive letter) adopts it. Choosing **Use the default** or an empty folder
+instead says where the mods are and goes on without them only when the player
+presses the same button again.
+
+When Steam moves the game to another library, the launcher finds it again and
+keeps the storage folder: a chosen folder stays chosen, and the old default
+`<old game folder> - mod storage` is kept as the chosen folder if it holds mods.
+A game folder on a drive that isn't connected is not replaced by another copy of
+the game on its own: the window offers that copy (`game.elsewhere`).
 
 ## Adding mods
 
@@ -184,12 +234,35 @@ into a unit:
   rules (a `_P.utoc` with a same-named `.pak` is part of the `.pak`, not a mod of
   its own).
 - Several candidate folders that look like versions of one mod → the window asks.
+  A picked version is named after the download too ("Su-57 Liveries - Red").
+  When several downloads are added together, all of their questions are asked
+  first and nothing is added before the player has chosen; each choice's id is
+  `<download>|<id>`, so the picks of two downloads can't be mixed up.
+- The game's own files (`global.utoc`, or containers that match the top of the
+  game's `Paks` folder by name and size) are refused: that is the game's folder,
+  not a mod.
+
+**Update or new mod?** An add counts as an update of an installed mod only when
+it is plausibly the same mod: it shares at least one `.utoc`/`.ucas`/`.pak` file
+name with it (or the installed folder is empty). A folder name alone never
+decides, so a different mod that happens to be called "New mod" or "Paks" is
+added as "Name (2)". An update whose folder has a new name ("Hornet v1" →
+"Hornet v2") keeps the old one's place in the load order, its on/off state and
+its first-added date. Script mods match by name ("CoolCam (1).zip" and
+"CoolCam-1.3.0" update "CoolCam").
 
 Each unit is first written to a staging folder, then committed. An update
 replaces the installed copy in place: the old copy is renamed aside
 (`<name>.ace8-updating`), the new one moved in, then the old one deleted; if the
-new one can't go in, the old one is renamed back. Leftovers from a launcher closed
-mid-update are cleaned up on the next add. Script mods first get the installed
+new one can't go in, the old one is renamed back. When the installed folder
+holds more than this mod (a `~mods` folder with other mods in it, a pack of
+skins), only the matching mod's files are replaced and the rest stays. Leftovers
+from a launcher closed mid-update are cleaned up at the next start, add, Play or
+switch, preferring a complete old copy.
+
+Problems that stop an added mod from loading (a missing `.ucas`, a `.pak` mod
+with a Mod Loader older than 1.3.1, LogicMods without BPModLoaderMod) come back
+as `warnings`, separate from `notes`, and the window shows them until closed. Script mods first get the installed
 copy's extra files (and those named in `ace8-keep.txt`) copied into the staged
 new copy; UE4SS's `shared` folder is updated file by file. The date of each add
 or update is kept in `mod-dates.json` in the data folder. Names are cleaned so Windows can store
@@ -201,8 +274,17 @@ matching place under `Switched off`.
 `runlog.go` reads the lines described in
 [Troubleshooting](troubleshooting.md#what-the-mod-loaders-log-lines-mean). Per mod
 it counts `result code=` (a `.utoc`) and `Legacy result AL= pak-in-table=` (a
-`.pak`; in the table counts as loaded). `testdata/` has real logs from 1.1.0 and
-1.3.1 the tests check against.
+`.pak`; in the table counts as loaded). It also reads every `skipped …` line and
+maps it to its mod: a `.pak` in `~mods` that the game loaded by itself counts as
+loaded, and every other skipped file counts as not loaded, with its reason in
+plain words in `run.problems`. "N of M loaded" is counted from these per-file
+results, not from the log's own `done:` line. `testdata/` has real logs from
+1.1.0 and 1.3.1 the tests check against.
+
+`utoc.go` reads `.utoc` files a stranger made, so every size and offset is
+checked against the file before use, the directory index is walked without
+recursion and each folder at most once, and the total work is capped: a damaged
+or hostile `.utoc` can't hang, crash or fill the memory.
 
 ## Starting the game
 
@@ -213,20 +295,33 @@ it counts `result code=` (a `.utoc`) and `Legacy result AL= pak-in-table=` (a
 `ShellExecuteEx` and write `steam_appid.txt`, since the environment doesn't pass
 through.
 
+If Steam had to be started and its registry still showed someone signed in
+(possibly left from a crash), the launcher also waits up to 30 s for Steam's
+`steamwebhelper.exe` before starting the game.
+
 **Windows, Unmodded:** `steam://rungameid/2288340`.
 
 **Linux, both modes:** `steam://rungameid/2288340`. The script in Steam's launch
 options (`ace8-steam-launch.sh`, written by the launcher at each start) decides:
 if `dwmapi.dll` is in `Game/Binaries/Win64`, it replaces `start_protected_game.exe`
 with `AceCombat8.exe -eac-nop-loaded -nosplash` and adds `dwmapi=n,b` to
-`WINEDLLOVERRIDES`; otherwise it runs Steam's command unchanged.
+`WINEDLLOVERRIDES`; otherwise it runs Steam's command unchanged. When more than
+one Steam folder exists (an old native Steam next to Flatpak Steam), the one
+whose libraries hold the game, then the one used most recently, is the one read
+and edited.
+
+After Play, the launcher watches for the game for up to 15 minutes
+(`launch.waiting`), every 0.5 s at first and every 2 s after 90 s. If the game
+never appears, `launch.gaveUp` tells the window it didn't start.
 
 ## Tests
 
-`go test ./...` (about a minute) runs every feature against fake game folders:
-switching (including held-open folders and other drives), storage moves, adding
-mods from real-world layouts, load order, log reading, setup, playing, and the
-Linux script run in front of a fake Steam command.
+`go test ./...` (a little over a minute) runs every feature against fake game
+folders: switching (including held-open folders, other drives and switches cut
+short), storage moves, adding and updating mods from real-world layouts, load
+order, log reading, setup, playing, uploads, and the Linux script run in front of
+a fake Steam command. The `fix_*_test.go` files hold a regression test for each
+bug fixed in 2.1.0; `utoc.go` also has a fuzz test (`go test -fuzz FuzzParseUtoc`).
 
 Two optional checks compare the launcher's mod discovery with the real Mod Loader's
 dry-run builds: set `ACE8_LOADER_SELFTEST` (1.1.0) and `ACE8_LOADER131_SELFTEST`

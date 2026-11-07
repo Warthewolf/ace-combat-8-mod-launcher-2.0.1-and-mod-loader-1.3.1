@@ -1,6 +1,104 @@
 ACE8 Mod Launcher - changelog
 =============================
 
+2.1.0 (2026-11-07)
+------------------
+Easier for first-time players
+- A short tour shows new players around the first time the launcher finds
+  the game: Modded and Unmodded, setting up modding, adding a mod, switching
+  mods on and off, playing, and what to do if something goes wrong. Help >
+  "Show the tour again" opens it again.
+- "First steps" on the Play page ticks itself off as you go: set up modding,
+  add a mod, play Modded. Each step has one button.
+- Setting up modding is the first thing on the Play page of a new install.
+  Adding a mod before setup offers to set up first, then adds the same mod.
+- Help starts with a Quick start, and has "Can I still play online?",
+  "Words you'll see", "Removing and restoring" and "Getting help".
+- Plain words everywhere: the status bar, the Modded and Unmodded cards, the
+  Mods page headings, and the messages for mods that don't load (what it
+  means and what to do first, the technical detail after).
+- Mods you just added are marked New and scrolled into view. Messages have a
+  close button, and problems stay until you close them.
+- While setup runs, the window shows that it is working, and afterwards it
+  suggests adding a mod. Play shows "Starting..." and can't be pressed twice.
+- Day theme: easier-to-read colours.
+
+Safer with your mods
+- Updating a mod that shares a folder with other mods (a ~mods folder you
+  made, a pack of skins) replaces only that mod. Before, the whole folder was
+  deleted, with the other mods in it.
+- A different mod that happens to have the same folder name ("New mod",
+  "Paks") no longer replaces yours: it is added as "Name (2)".
+- Switching no longer hides your mods when some are in the game and some in
+  storage (a mod put into ~mods by hand while Unmodded): the two are
+  combined.
+- If the launcher is closed or the PC turns off during a switch, the next
+  switch finishes or undoes it properly. With the storage folder on another
+  drive, a switch cut short never leaves half a copy that looks like your
+  mods.
+- When Steam moves the game to another library, the launcher keeps using
+  your storage folder, so switched-off and removed mods don't go missing.
+  "Use the default" while the storage folder can't be found no longer leaves
+  your mods behind without a word.
+- Moving the storage folder to another drive keeps the originals until the
+  move is done, and a move that was cut short can simply be tried again.
+- Restoring a removed mod puts it where it belongs for the current mode and
+  never leaves the game "Half switched".
+- Dropping the game's own folder is refused. Before, the game's files were
+  installed as a mod.
+- Only one launcher runs at a time, even when started twice quickly, and a
+  busy launcher is never stopped when a newer one starts.
+
+Adding and updating mods
+- An update whose folder has a new name ("Hornet v1" to "Hornet v2") keeps
+  the mod's place in the load order and its on/off state. Downloading a
+  script mod again ("CoolCam (1).zip") updates it instead of adding a second
+  copy that runs as well.
+- A picked version is named after its download ("Su-57 Liveries - Red").
+  When several downloads are added together, the launcher asks about all
+  their versions before adding anything.
+- LogicMods that come as .pak + .ucas + .utoc are installed whole. Pak files
+  in a script mod's folder are added where the Mod Loader loads them.
+- A mod that won't load as it is (a missing .ucas, a .pak mod with an old
+  Mod Loader) is added with a warning saying what to do.
+- Setup no longer says "Modding is set up" when UE4SS.dll is missing (some
+  antivirus programs remove it). It says which file is missing.
+- Dropping big folders works: no more limit of about 500 files, no double
+  disk space, and a failed drop leaves nothing behind. Over 16 GB is refused.
+- The Set up modding button appears as soon as the Mod Loader download is put
+  next to the launcher, without restarting.
+
+Last game start and the Mods page
+- A damaged .utoc file in a mod no longer freezes the launcher.
+- .pak mods in ~mods that the game loads by itself show as Loaded. A
+  switched-off one says it still loads, and that Remove stops it.
+- When the Mod Loader can't load .pak mods on your game version, it says so,
+  instead of saying all mods loaded. Every switched-on mod file counts in
+  "N of M loaded", including the ones that were skipped.
+- Script mods show On or Off the way UE4SS really decides, and mods with a
+  dot or an apostrophe in their name show as Started. Script errors are
+  listed with the mod's name.
+- Mods added after the last game start no longer show a false "Not started".
+- The support report lists why mods didn't load.
+
+Other fixes
+- A failed switch keeps its reason under the switch. Quick on/off or order
+  changes are no longer lost while a save is still going.
+- The launcher watches up to 15 minutes for a slow game start (long Steam
+  starts, shader pre-caching), and says when the game didn't start.
+- If the game is on a drive that isn't connected, the launcher says so and
+  offers any other copy it found, instead of switching to it for good.
+- Extra launch options and the tour are saved even while the launcher is
+  busy. Looking for the game no longer freezes the window, and network and
+  CD/DVD drives are no longer searched.
+- Error messages that start with a Japanese, Chinese or accented mod name
+  are no longer garbled.
+- Linux / Steam Deck: "~Mods" with other capitals is switched off too, files
+  in other capitals are found, Add a mod... asks for the path when there is
+  no file chooser, the Steam that has the game is used when an old one is
+  left next to Flatpak Steam, and the data folder is private to your
+  account.
+
 2.0.4 (2026-11-07)
 ------------------
 - Updating a mod overwrites the installed version in place. No copy of the
