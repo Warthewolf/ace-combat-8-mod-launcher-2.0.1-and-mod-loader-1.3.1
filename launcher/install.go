@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // ---- setup -----------------------------------------------------------------
@@ -38,6 +39,12 @@ func bundleDir() string {
 	consider := func(d string) {
 		dll := join(d, "Game", "Binaries", "Win64", "ue4ss", "Mods", "IoStoreLoaderMod", "dlls", "main.dll")
 		if !isFile(dll) || !isFile(join(d, "Game", "Binaries", "Win64", "dwmapi.dll")) {
+			return
+		}
+		if looksLikeGame(d) {
+			// a game install (the launcher sits in it, or next to it in
+			// steamapps\common) is not a download to set up from: it can't
+			// bring back a file that is missing from the game
 			return
 		}
 		v := loaderVersion(dll)
@@ -206,6 +213,9 @@ func (g Game) setup() (SetupResult, error) {
 	}
 	updateLoader := st.Loader == "" || st.CanUpdate
 	bd := bundleDir()
+	if !isFile(join(g.ue4ssRoot(), "UE4SS.dll")) && !isFile(join(bd, "Game", "Binaries", "Win64", "ue4ss", "UE4SS.dll")) {
+		return res, errors.New("UE4SS.dll is missing from the Mod Loader download (in " + filepath.Base(bd) + "\\Game\\Binaries\\Win64\\ue4ss), so nothing was set up. Antivirus programs sometimes remove it: restore it from your antivirus's quarantine, or unzip the Mod Loader download again, then press Install again")
+	}
 	err := filepath.Walk(bd, func(p string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return err
@@ -246,7 +256,27 @@ func (g Game) setup() (SetupResult, error) {
 	}
 	setModsTxtLine(join(g.Win64(), "ue4ss", "Mods"), "IoStoreLoaderMod", true, false)
 	logf("setup: installed %d files, kept %v", len(res.Installed), res.Kept)
+	if missing := g.setupMissing(); len(missing) > 0 {
+		logf("setup: still missing %v", missing)
+		return res, errors.New("modding is not set up yet: " + strings.Join(missing, ", ") + " is missing in the game. Antivirus programs sometimes remove these files: restore them from your antivirus's quarantine, or unzip the Mod Loader download again, then press Install again")
+	}
 	return res, nil
+}
+
+// setupMissing names the files UE4SS and the Mod Loader need that are not in the game.
+func (g Game) setupMissing() []string {
+	var out []string
+	ue := g.ue4ssRoot()
+	for _, f := range []struct{ name, path string }{
+		{"dwmapi.dll", join(filepath.Dir(ue), "dwmapi.dll")},
+		{"UE4SS.dll", join(ue, "UE4SS.dll")},
+		{"the Mod Loader's main.dll", join(ue, "Mods", "IoStoreLoaderMod", "dlls", "main.dll")},
+	} {
+		if !isFile(f.path) {
+			out = append(out, f.name)
+		}
+	}
+	return out
 }
 
 // ---- adding mods ---------------------------------------------------------------
@@ -289,9 +319,38 @@ func readZip(p string) ([]incoming, func(), error) {
 			return nil, nil, errors.New("this .zip is too big to be a mod")
 		}
 		f := f
-		out = append(out, incoming{rel: f.Name, open: func() (io.ReadCloser, error) { return f.Open() }, size: int64(f.UncompressedSize64), mtime: f.Modified})
+		out = append(out, incoming{rel: zipName(f.Name), open: func() (io.ReadCloser, error) { return f.Open() }, size: int64(f.UncompressedSize64), mtime: f.Modified})
 	}
 	return out, func() { zr.Close() }, nil
+}
+
+// zipName keeps apart names that are not UTF-8, as older Japanese, Chinese or
+// Korean zip tools write them. Windows would turn every byte it can't read into
+// the same sign, so the folders "青" and "赤" would both become "��" and one mod
+// would replace the other. Each such byte is written as "_" and its value
+// instead ("_90_C2"), which stays the same each time the zip is added. The byte
+// after a lead byte belongs to the same letter, even when it looks like "\".
+func zipName(name string) string {
+	if utf8.ValidString(name) {
+		return name
+	}
+	var b strings.Builder
+	for i := 0; i < len(name); {
+		r, n := utf8.DecodeRuneInString(name[i:])
+		if r != utf8.RuneError || n != 1 {
+			b.WriteString(name[i : i+n])
+			i += n
+			continue
+		}
+		c := name[i]
+		fmt.Fprintf(&b, "_%02X", c)
+		i++
+		if c >= 0x81 && c <= 0xFE && i < len(name) && name[i] >= 0x40 && name[i] <= 0xFE && name[i] != 0x7F {
+			fmt.Fprintf(&b, "_%02X", name[i])
+			i++
+		}
+	}
+	return b.String()
 }
 
 func readFolder(root string) ([]incoming, error) {
@@ -323,6 +382,9 @@ type unit struct {
 	files   map[string]incoming
 	utocs   []string // its containers: .utoc files, and *_P.pak files (a .pak's own .utoc is not counted)
 	isFiles bool     // target is a folder that receives loose files directly (not replaced as a whole)
+	base    string   // for a place named in the download (ue4ss\Mods, ~mods, LogicMods): the id without the folders above it
+	pre     string   // … and those folders ("Option A - Green")
+	alt     bool     // one of several versions of the same files in the download: the player picks one
 }
 
 var skipExt = map[string]bool{".zip": true, ".7z": true, ".rar": true, ".exe": true, ".bat": true, ".ps1": true, ".cmd": true, ".lnk": true}
@@ -447,6 +509,18 @@ func (g Game) planAdd(source string, files []incoming, at addPlaces) ([]*unit, A
 		}
 		res.Notes = append(res.Notes, s)
 	}
+	// Where the download names the place a file goes (ue4ss\Mods, ~mods,
+	// LogicMods), the folders above that place keep copies apart:
+	// "Option A\~mods\HUD_P.pak" and "Option B\~mods\HUD_P.pak" are two versions
+	// of one mod, not one mod whose files overwrite each other.
+	pre := ""
+	getAt := func(id, kind, name, target string) *unit {
+		u := get(id+"\x00"+strings.ToLower(pre), kind, name, target)
+		u.base, u.pre = id, pre
+		return u
+	}
+	// Skin Studio skins are added in Skin Studio; the rest of the download is added here.
+	skins := skinStudioDirs(files)
 	var loose []incoming
 	for _, f := range files {
 		segs, ok := cleanSegments(f.rel)
@@ -454,17 +528,17 @@ func (g Game) planAdd(source string, files []incoming, at addPlaces) ([]*unit, A
 			continue
 		}
 		f.rel = strings.Join(segs, "/")
+		if inDirs(f.rel, skins) {
+			continue
+		}
 		base := segs[len(segs)-1]
 		ext := strings.ToLower(path.Ext(base))
-		if strings.EqualFold(base, "skinstudio.json") {
-			res.SkinStudio = true
-			return nil, res, nil
-		}
 		if ext == ".zip" || ext == ".7z" || ext == ".rar" {
 			note("The download has another archive inside (" + base + "). Unpack it and add what is inside, if it is a mod.")
 			continue
 		}
 		if i := indexFold(segs, "ue4ss"); i >= 0 {
+			pre = strings.Join(segs[:i], "/")
 			rest := segs[i+1:]
 			if len(rest) < 2 || !strings.EqualFold(rest[0], "Mods") {
 				note("UE4SS itself was in the download; your own UE4SS was kept.")
@@ -484,7 +558,7 @@ func (g Game) planAdd(source string, files []incoming, at addPlaces) ([]*unit, A
 					switch strings.ToLower(path.Ext(sub[0])) {
 					case ".utoc", ".ucas", ".pak", ".sig": // a loose container: it gets a folder of its own
 						name := safeName(strings.TrimSuffix(sub[0], path.Ext(sub[0])))
-						u := get("pak:"+strings.ToLower(name), "pak", name, join(loader, name))
+						u := getAt("pak:"+strings.ToLower(name), "pak", name, join(loader, name))
 						u.files[sub[0]] = f
 					}
 				case strings.EqualFold(sub[0], "dlls") || strings.EqualFold(sub[0], "source"):
@@ -492,7 +566,7 @@ func (g Game) planAdd(source string, files []incoming, at addPlaces) ([]*unit, A
 				case isSkippedDir(sub[0]):
 					// tools' working folders and old copies are not mods
 				default:
-					u := get("pak:"+strings.ToLower(sub[0]), "pak", sub[0], join(loader, sub[0]))
+					u := getAt("pak:"+strings.ToLower(sub[0]), "pak", sub[0], join(loader, sub[0]))
 					u.files[strings.Join(sub[1:], "/")] = f
 				}
 				continue
@@ -507,33 +581,54 @@ func (g Game) planAdd(source string, files []incoming, at addPlaces) ([]*unit, A
 				}
 				continue
 			}
-			u := get("script:"+strings.ToLower(name), "script", name, join(ue, "Mods", name))
+			if keepStockScriptMod(ue, name) {
+				note("UE4SS's own " + name + " was in the download; yours was kept.")
+				continue
+			}
+			u := getAt("script:"+strings.ToLower(name), "script", name, join(ue, "Mods", name))
 			u.files[strings.Join(rest[1:], "/")] = f
 			continue
 		}
 		if i := indexFold(segs, "~mods"); i >= 0 && i+1 < len(segs) {
+			pre = strings.Join(segs[:i], "/")
 			rest := segs[i+1:]
 			if len(rest) == 1 {
 				name := strings.TrimSuffix(rest[0], path.Ext(rest[0]))
-				u := get("tildefile:"+strings.ToLower(name), "tildefiles", name, tilde)
+				u := getAt("tildefile:"+strings.ToLower(name), "tildefiles", name, tilde)
 				u.isFiles = true
 				u.files[rest[0]] = f
 			} else {
-				u := get("tilde:"+strings.ToLower(rest[0]), "tilde", rest[0], join(tilde, rest[0]))
+				name := rest[0]
+				if isSkippedDir(name) {
+					// the Mod Loader skips a ~mods folder with this name, so the mod would never load
+					name = modName(segs[:i], source)
+				}
+				u := getAt("tilde:"+strings.ToLower(name), "tilde", name, join(tilde, name))
 				u.files[strings.Join(rest[1:], "/")] = f
 			}
 			continue
 		}
 		if i := indexFold(segs, "LogicMods"); i >= 0 && i+1 < len(segs) {
+			pre = strings.Join(segs[:i], "/")
 			rest := segs[i+1:]
 			if len(rest) == 1 {
-				u := get("logicfile:"+strings.ToLower(rest[0]), "logicfiles", rest[0], logic)
+				// Thing.pak, Thing.ucas and Thing.utoc are one mod: they go in together
+				name := strings.TrimSuffix(rest[0], path.Ext(rest[0]))
+				u := getAt("logicfile:"+strings.ToLower(name), "logicfiles", name, logic)
 				u.isFiles = true
 				u.files[rest[0]] = f
 			} else {
-				u := get("logic:"+strings.ToLower(rest[0]), "logic", rest[0], join(logic, rest[0]))
+				u := getAt("logic:"+strings.ToLower(rest[0]), "logic", rest[0], join(logic, rest[0]))
 				u.files[strings.Join(rest[1:], "/")] = f
 			}
+			continue
+		}
+		if i := indexFold(segs, "shared"); i > 0 && i+1 < len(segs) && strings.EqualFold(segs[i-1], "Mods") {
+			// UE4SS's shared Lua libraries in a download laid out from inside the
+			// ue4ss folder ("Mods\shared\…"): added file by file, as above
+			u := get("shared", "shared", "shared", join(ue, "Mods", "shared"))
+			u.isFiles = true
+			u.files[strings.Join(segs[i+1:], "/")] = f
 			continue
 		}
 		if indexFold(segs, "Win64") >= 0 || indexFold(segs, "EasyAntiCheat") >= 0 {
@@ -542,26 +637,36 @@ func (g Game) planAdd(source string, files []incoming, at addPlaces) ([]*unit, A
 		}
 		loose = append(loose, f)
 	}
+	units, order = joinAlternatives(units, order)
 
 	// Loose files: script mod folders first (a folder with Scripts\main.lua or dlls\main.dll) …
 	scriptRoots := map[string]bool{}
+	pakFolders := map[string]bool{} // folders (lower case) with .utoc or *_P.pak files in them
 	for _, f := range loose {
 		segs := strings.Split(f.rel, "/")
 		n := len(segs)
 		if n >= 2 && ((strings.EqualFold(segs[n-2], "Scripts") && strings.EqualFold(segs[n-1], "main.lua")) || (strings.EqualFold(segs[n-2], "dlls") && strings.EqualFold(segs[n-1], "main.dll"))) {
 			scriptRoots[strings.Join(segs[:n-2], "/")] = true
 		}
+		if strings.HasSuffix(strings.ToLower(f.rel), ".utoc") || isPakName(f.rel) {
+			pakFolders[strings.ToLower(path.Dir(f.rel))] = true
+		}
 	}
+	roots := make([]string, 0, len(scriptRoots))
+	for r := range scriptRoots {
+		roots = append(roots, r)
+	}
+	// the innermost script mod a file is in gets it
+	sort.Slice(roots, func(i, j int) bool {
+		return len(roots[i]) > len(roots[j]) || (len(roots[i]) == len(roots[j]) && roots[i] < roots[j])
+	})
+	rootNames := scriptNames(roots, source, ue)
 	var rest []incoming
 	for _, f := range loose {
 		placed := false
-		for root := range scriptRoots {
+		for _, root := range roots {
 			if root == "" || strings.HasPrefix(strings.ToLower(f.rel), strings.ToLower(root)+"/") {
-				name := path.Base(root)
-				if root == "" {
-					name = source
-				}
-				name = safeName(name)
+				name := rootNames[root]
 				if strings.EqualFold(name, "IoStoreLoaderMod") || strings.EqualFold(name, "shared") {
 					// The Mod Loader (or UE4SS's shared files) is not a script mod: keep the
 					// player's own copy, but still pick up pak mods in folders inside it.
@@ -573,7 +678,16 @@ func (g Game) planAdd(source string, files []incoming, at addPlaces) ([]*unit, A
 					}
 					break
 				}
+				if isContainerFile(f.rel) && pakFolders[strings.ToLower(path.Dir(f.rel))] {
+					// a pak mod that comes with the script mod: the Mod Loader only
+					// loads it from its own folder, so it is added as a pak mod below
+					break
+				}
 				placed = true
+				if keepStockScriptMod(ue, name) {
+					note("UE4SS's own " + name + " was in the download; yours was kept.")
+					break
+				}
 				u := get("script:"+strings.ToLower(name), "script", name, join(ue, "Mods", name))
 				r := f.rel
 				if root != "" {
@@ -605,16 +719,29 @@ func (g Game) planAdd(source string, files []incoming, at addPlaces) ([]*unit, A
 		dirs = append(dirs, d)
 	}
 	sort.Slice(dirs, func(i, j int) bool { return foldCmp(dirs[i], dirs[j]) < 0 })
-	for _, d := range dirs {
-		name := path.Base(d)
-		if d == "." {
-			name = source
+	taken := func(id string) bool {
+		for _, u := range units {
+			if u.id == id || u.base == id {
+				return true
+			}
 		}
-		name = safeName(name)
+		return false
+	}
+	for _, d := range dirs {
+		var segs []string
+		if d != "." {
+			segs = strings.Split(d, "/")
+		}
+		// named after its folder, unless that says nothing ("Paks") or is one the
+		// Mod Loader skips ("Packed"): then after the folder above, or the download
+		name := modName(segs, source)
 		id := "pak:" + strings.ToLower(name)
-		if _, taken := units[id]; taken {
+		if taken(id) {
 			id = "pak:" + strings.ToLower(d)
 			name = safeName(strings.ReplaceAll(d, "/", " - "))
+			if isSkippedDir(name) {
+				name += " mod"
+			}
 		}
 		u := get(id, "pak", name, join(loader, name))
 		for _, f := range pakDirs[d] {
@@ -640,7 +767,214 @@ func (g Game) planAdd(source string, files []incoming, at addPlaces) ([]*unit, A
 		sort.Strings(u.utocs)
 		out = append(out, u)
 	}
+	if len(skins) > 0 {
+		if len(out) == 0 {
+			res.SkinStudio = true
+			return nil, res, nil
+		}
+		var names []string
+		for _, d := range skins {
+			names = append(names, path.Base(d))
+		}
+		sort.Strings(names)
+		what := "this skin was"
+		if len(names) > 1 {
+			what = "these skins were"
+		}
+		note("Skin Studio skins are added in ACE8 Skin Studio (Skin slots, then Import), so " + what + " not added here: " + strings.Join(names, ", ") + ".")
+	}
 	return out, res, nil
+}
+
+// genericDirs are folder names that say nothing about which mod is in them.
+var genericDirs = map[string]bool{"paks": true, "content": true, "game": true, "mods": true, "mod": true,
+	"files": true, "assets": true, "data": true, "windows": true, "windowsnoeditor": true,
+	"iostoreloadermod": true, "new folder": true, "~mods": true, "logicmods": true}
+
+// modName names a mod after the last folder in segs that says what it is: not a
+// generic one ("Paks", "Files"), so that two different mods don't both become
+// "Paks", and not one the Mod Loader skips ("Packed", "Old"), where the mod would
+// never load or show on the Mods page. Without one, the download's name is used.
+func modName(segs []string, source string) string {
+	for i := len(segs) - 1; i >= 0; i-- {
+		if !genericDirs[strings.ToLower(segs[i])] && !isSkippedDir(segs[i]) {
+			return safeName(segs[i])
+		}
+	}
+	name := safeName(source)
+	if isSkippedDir(name) {
+		name += " mod"
+	}
+	return name
+}
+
+var (
+	reCopySuffix    = regexp.MustCompile(`\s*\(\d{1,3}\)$`)
+	reVersionSuffix = regexp.MustCompile(`(?i)[\s_-]+v?\d+(\.\d+)+[a-z]?$|[\s_-]+v\d+$`)
+)
+
+// baseModName drops what downloads add to a mod's name: the browser's " (1)" for
+// a second download, and a version ("-1.2.0", " v1.3"). "CoolCam-1.2.0 (1)" is CoolCam.
+func baseModName(name string) string {
+	b := strings.TrimSpace(reCopySuffix.ReplaceAllString(name, ""))
+	b = strings.TrimSpace(reVersionSuffix.ReplaceAllString(b, ""))
+	if b == "" {
+		return name
+	}
+	return b
+}
+
+// scriptNames names the script mods found as plain folders in a download (or at
+// its top, named after the download). The browser's " (1)" and a version are left
+// out of the name, and an installed script mod with the same name is the older
+// version of this one: a second download updates it instead of adding a second
+// copy, which UE4SS would run as well.
+func scriptNames(roots []string, source, ue string) map[string]string {
+	names := map[string]string{}
+	count := map[string]int{}
+	for _, r := range roots {
+		n := source
+		if r != "" {
+			n = path.Base(r)
+		}
+		names[r] = safeName(baseModName(n))
+		count[strings.ToLower(names[r])]++
+	}
+	installed := listScriptMods(ue)
+	for _, r := range roots {
+		if count[strings.ToLower(names[r])] > 1 {
+			// two mods in this download would get the same name: keep their own names
+			n := source
+			if r != "" {
+				n = path.Base(r)
+			}
+			names[r] = safeName(n)
+			continue
+		}
+		names[r] = installedScriptName(installed, names[r])
+	}
+	return names
+}
+
+// installedScriptName is the folder name of the installed script mod that name
+// is a version of (the same name, or the same apart from a version or " (1)").
+func installedScriptName(installed []*ScriptMod, name string) string {
+	for _, m := range installed {
+		if strings.EqualFold(m.Name, name) {
+			return m.Name
+		}
+	}
+	for _, m := range installed {
+		if strings.EqualFold(baseModName(m.Name), name) {
+			return m.Name
+		}
+	}
+	return name
+}
+
+// UE4SS's own script mods. When a download brings them (often from another
+// UE4SS version), the player's copy is kept, as UE4SS itself is.
+var stockScriptMods = []string{"ActorDumperMod", "BPML_GenericFunctions", "BPModLoaderMod", "CheatManagerEnablerMod",
+	"ConsoleCommandsMod", "ConsoleEnablerMod", "jsbLuaProfilerMod", "Keybinds", "LineTraceMod", "SplitScreenMod"}
+
+func keepStockScriptMod(ue, name string) bool {
+	for _, s := range stockScriptMods {
+		if strings.EqualFold(s, name) {
+			return isDir(join(ue, "Mods", name))
+		}
+	}
+	return false
+}
+
+// isContainerFile: one of the files a pak mod is made of.
+func isContainerFile(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".utoc", ".ucas", ".pak", ".sig":
+		return true
+	}
+	return false
+}
+
+// skinStudioDirs are the folders of a download that hold a Skin Studio skin.
+func skinStudioDirs(files []incoming) []string {
+	var out []string
+	for _, f := range files {
+		if segs, ok := cleanSegments(f.rel); ok && strings.EqualFold(segs[len(segs)-1], "skinstudio.json") {
+			out = append(out, strings.Join(segs[:len(segs)-1], "/"))
+		}
+	}
+	return out
+}
+
+// inDirs: rel (with /) is inside one of dirs ("" is the whole download).
+func inDirs(rel string, dirs []string) bool {
+	for _, d := range dirs {
+		if d == "" || strings.HasPrefix(strings.ToLower(rel), strings.ToLower(d)+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// joinAlternatives settles the units planned per folder above the place named in
+// the download. Copies from several folders whose files have the same names are
+// alternatives the player chooses between; otherwise they are one mod again.
+func joinAlternatives(units map[string]*unit, order []string) (map[string]*unit, []string) {
+	byBase := map[string][]*unit{}
+	var seq []*unit // in order; a group sits where its first unit was
+	for _, k := range order {
+		u := units[k]
+		if u.base == "" {
+			seq = append(seq, u)
+			continue
+		}
+		if len(byBase[u.base]) == 0 {
+			seq = append(seq, u)
+		}
+		byBase[u.base] = append(byBase[u.base], u)
+	}
+	out := map[string]*unit{}
+	var outOrder []string
+	add := func(u *unit) {
+		out[u.id] = u
+		outOrder = append(outOrder, u.id)
+	}
+	for _, u := range seq {
+		group := byBase[u.base]
+		switch {
+		case u.base == "":
+			add(u)
+		case len(group) == 1 || !filesCollide(group):
+			for _, o := range group[1:] {
+				for k, f := range o.files {
+					u.files[k] = f
+				}
+			}
+			u.id = u.base
+			add(u)
+		default:
+			for _, o := range group {
+				o.id = o.base + "@" + strings.ToLower(o.pre)
+				o.alt = true
+				add(o)
+			}
+		}
+	}
+	return out, outOrder
+}
+
+func filesCollide(group []*unit) bool {
+	seen := map[string]*unit{}
+	for _, u := range group {
+		for k := range u.files {
+			k = strings.ToLower(k)
+			if o, ok := seen[k]; ok && o != u {
+				return true
+			}
+			seen[k] = u
+		}
+	}
+	return false
 }
 
 // addMods installs a download. Several versions of the same mod side by side
@@ -662,43 +996,24 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 	if err != nil || res.SkinStudio {
 		return res, err
 	}
-	var paks []*unit
-	for _, u := range units {
-		if u.kind == "pak" && len(u.utocs) > 0 {
-			paks = append(paks, u)
-		}
-	}
 	if len(units) == 0 {
 		for _, f := range files {
 			if strings.EqualFold(path.Ext(f.rel), ".pak") && !isPakName(f.rel) {
 				return res, errors.New(path.Base(f.rel) + " can't be loaded: the Mod Loader only loads .pak files whose names end in _P.pak. Ask the mod's author for a _P.pak version")
 			}
 		}
+		for _, f := range files {
+			switch strings.ToLower(path.Ext(f.rel)) {
+			case ".zip", ".7z", ".rar":
+				return res, errors.New("the download has another archive inside (" + path.Base(f.rel) + "), and no mod next to it. Unpack that archive, then add what comes out of it")
+			}
+		}
 		return res, errors.New("no mod was found in it. A mod has a .utoc and a .ucas file, or a file ending in _P.pak (pak mods), or a Scripts\\main.lua (UE4SS script mod)")
 	}
-	if len(paks) > 1 && pick == nil && looksLikeVersions(paks) {
-		for _, u := range paks {
-			var fl []string
-			for n := range u.files {
-				fl = append(fl, n)
-			}
-			sort.Strings(fl)
-			res.Choices = append(res.Choices, AddChoice{ID: u.id, Name: u.name, Files: fl})
-		}
+	units, choices := pickVersions(units, pick, source)
+	if len(choices) > 0 {
+		res.Choices = choices
 		return res, nil
-	}
-	if pick != nil {
-		want := map[string]bool{}
-		for _, p := range pick {
-			want[p] = true
-		}
-		var keep []*unit
-		for _, u := range units {
-			if u.kind != "pak" || want[u.id] {
-				keep = append(keep, u)
-			}
-		}
-		units = keep
 	}
 	installed, _ := scanPakMods(at.loader, at.tilde)
 	if !loaderPaks(at.loader) {
@@ -721,20 +1036,11 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 		path    string
 		updated bool
 	}
+	committed := map[string]bool{} // what this add has put in place (lower case)
+	var replaced []replacement
 	for i, u := range units {
 		if len(u.files) == 0 {
 			continue
-		}
-		if u.kind != "script" {
-			for _, n := range u.utocs {
-				stem := strings.TrimSuffix(n, path.Ext(n))
-				if isPakName(n) && !hasFileFold(u.files, stem+".utoc") {
-					continue // a .pak on its own needs nothing else
-				}
-				if !isFile(join(u.target, stem+".ucas")) && !hasFileFold(u.files, stem+".ucas") {
-					res.Notes = append(res.Notes, n+" has no .ucas file next to it in the download, so it will not load. Ask the mod's author for the full files.")
-				}
-			}
 		}
 		// 1. Copy the new files next to the game first. Nothing in the game is
 		// touched until every file of the download has been read.
@@ -758,94 +1064,72 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 			}
 			continue
 		}
+		uk := unitKeys(u)
+		merge := false
+		var notes []string // told once this mod is in
+		if u.kind != "script" && !u.isFiles {
+			var n string
+			if merge, n = pickTarget(u, uk, committed); n != "" {
+				notes = append(notes, n)
+			}
+			if merge {
+				u.isFiles = true // the folder holds other mods too: only this mod's files go in
+				for rel := range u.files {
+					if !isContainerFile(rel) && lexists(join(u.target, filepath.FromSlash(rel))) {
+						delete(u.files, rel) // the folder's own readme and such stay as they are
+					}
+				}
+				if others := containerNames(u.target, uk); len(others) > 0 {
+					notes = append(notes, u.name+" also holds other mods ("+strings.Join(others, ", ")+"). Only the files this download has were replaced; the others were kept.")
+				}
+			}
+		}
+		if u.kind != "script" {
+			for _, n := range u.utocs {
+				stem := strings.TrimSuffix(n, path.Ext(n))
+				if isPakName(n) && !hasFileFold(u.files, stem+".utoc") {
+					continue // a .pak on its own needs nothing else
+				}
+				if !isFile(join(u.target, stem+".ucas")) && !hasFileFold(u.files, stem+".ucas") {
+					res.Notes = append(res.Notes, n+" has no .ucas file next to it in the download, so it will not load. Ask the mod's author for the full files.")
+				}
+			}
+		}
 		// 2. An update replaces the installed copy in place; nothing goes to
 		// Removed mods. The old files are first renamed aside where they are
 		// ("<name>.ace8-updating") and only deleted once the new copy is in, so
 		// a failed update leaves the old version working.
-		var asideMoves [][2]string // {where it was, where it is now}
-		asideSeen := map[string]bool{}
-		putAside := func(p string) error {
-			if asideSeen[strings.ToLower(p)] || !lexists(p) {
-				return nil
-			}
-			dst := p + updatingSuffix
-			os.RemoveAll(dst)
-			if err := moveItem(p, dst); err != nil {
-				return err
-			}
-			asideSeen[strings.ToLower(p)] = true
-			asideMoves = append(asideMoves, [2]string{p, dst})
-			return nil
-		}
-		undo := func() {
-			for k := len(asideMoves) - 1; k >= 0; k-- {
-				if err := moveItem(asideMoves[k][1], asideMoves[k][0]); err != nil {
-					logf("could not put %s back: %v", asideMoves[k][0], err)
-				}
-			}
-		}
-		// a loose mod is up to four files with the same name: they go together
-		companions := func(p string) []string {
-			ext := strings.ToLower(filepath.Ext(p))
-			if ext != ".utoc" && ext != ".ucas" && ext != ".pak" && ext != ".sig" {
-				return []string{p}
-			}
-			base := strings.TrimSuffix(p, filepath.Ext(p))
-			var out []string
-			for _, e := range []string{".utoc", ".ucas", ".pak", ".sig"} {
-				out = append(out, base+e)
-			}
-			return out
-		}
-		older := map[string]bool{}
+		var aside []asideItem
+		var wholeOld []*PakMod
 		if u.kind != "script" {
-			// the same container already installed in another folder is an older copy of this mod
-			for _, m := range installed {
-				if samePath(m.Path, u.target) || older[strings.ToLower(m.Path)] || !exists(m.Path) {
-					continue
-				}
-				if u.isFiles && m.IsFile && samePath(filepath.Dir(m.Path), u.target) {
-					continue // a loose file with the same name: replaced below
-				}
-				for _, c := range m.Containers {
-					for _, n := range u.utocs {
-						if containerKey(c.Name) != containerKey(n) || older[strings.ToLower(m.Path)] {
-							continue
-						}
-						older[strings.ToLower(m.Path)] = true
-						paths := []string{m.Path}
-						if m.IsFile {
-							paths = companions(m.Path)
-						}
-						for _, p := range paths {
-							if err := putAside(p); err != nil {
-								undo()
-								return res, fmt.Errorf("could not replace the older copy in %s: %s", m.Key, explainMoveError(err))
-							}
-						}
-						res.Notes = append(res.Notes, "The older copy in "+m.Key+" was replaced.")
-					}
-				}
-			}
+			var more []string
+			aside, more, wholeOld = olderCopies(u, installed)
+			notes = append(notes, more...)
 		}
+		replacedOlder := len(aside) > 0
 		updated, wasOff := false, false
-		if u.isFiles {
-			// loose files in ~mods or LogicMods: a file with the same name is an older copy
+		switch {
+		case u.isFiles:
+			// loose files in ~mods or LogicMods (or a mod going into a folder that
+			// holds other mods too): a file with the same name is an older copy
 			for rel := range u.files {
 				for _, p := range companions(join(u.target, filepath.FromSlash(rel))) {
-					if !lexists(p) {
-						continue
+					if lexists(p) {
+						aside = append(aside, asideItem{path: p, what: filepath.Base(p)})
+						updated = true
 					}
-					if err := putAside(p); err != nil {
-						undo()
-						return res, fmt.Errorf("could not replace %s: %s", filepath.Base(p), explainMoveError(err))
-					}
+				}
+			}
+			if merge {
+				for _, p := range matchingFiles(u.target, overlap(folderKeys(u.target, false), uk)) {
+					aside = append(aside, asideItem{path: p, what: filepath.Base(p), stop: u.target})
 					updated = true
 				}
 			}
-		} else if exists(u.target) {
-			wasOff = u.kind == "script" && isFile(join(u.target, "enabled.off")) && !isFile(join(u.target, "enabled.txt"))
+		case exists(u.target):
+			updated = hasFiles(u.target)
 			if u.kind == "script" {
+				wasOff = scriptModOff(u.target, u.name)
 				// keep what the player and other mods added to the installed copy:
 				// files the new version doesn't have, and those ace8-keep.txt names
 				carried, kept, err := carryOver(u.target, tmp)
@@ -859,22 +1143,80 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 					os.Remove(join(tmp, "enabled.txt")) // it stays switched off
 				}
 			}
-			if err := putAside(u.target); err != nil {
-				undo()
-				return res, fmt.Errorf("could not replace %s: %s", u.name, explainMoveError(err))
-			}
-			updated = true
+			aside = append(aside, asideItem{path: u.target, what: u.name})
 		}
-		// 3. Move the new copy in. If that fails, the old one goes back.
+		if touchesThisAdd(aside, committed) {
+			// two parts of one download would replace each other: the first one stays
+			res.Notes = append(res.Notes, u.name+" is in the download twice, so only its first copy was added.")
+			continue
+		}
+		var asideMoves [][2]string // {where it was, where it is now}
+		undo := func() {
+			for k := len(asideMoves) - 1; k >= 0; k-- {
+				if err := moveItem(asideMoves[k][1], asideMoves[k][0]); err != nil {
+					logf("could not put %s back: %v", asideMoves[k][0], err)
+				}
+			}
+		}
+		seen := map[string]bool{}
+		for _, a := range aside {
+			if seen[strings.ToLower(a.path)] || !lexists(a.path) {
+				continue
+			}
+			seen[strings.ToLower(a.path)] = true
+			dst := a.path + updatingSuffix
+			os.RemoveAll(dst)
+			if err := moveItem(a.path, dst); err != nil {
+				undo()
+				return res, fmt.Errorf("could not replace %s: %s", a.what, explainMoveError(err))
+			}
+			asideMoves = append(asideMoves, [2]string{a.path, dst})
+		}
+		// 3. Move the new copy in. If that fails, the old one goes back. While a
+		// folder goes in, a marker next to it says it is not all there yet, so a
+		// launcher closed half way brings back the old copy, not half the new one.
+		marker := ""
+		if !u.isFiles && seen[strings.ToLower(u.target)] {
+			marker = u.target + incompleteSuffix
+			if os.WriteFile(marker, nil, 0o644) != nil {
+				marker = ""
+			}
+		}
 		if err := commitUnit(u, tmp); err != nil {
 			undo()
+			if marker != "" {
+				os.Remove(marker)
+			}
 			return res, fmt.Errorf("%s could not be added: %s Nothing was changed for this mod.", u.name, explainMoveError(err))
+		}
+		if marker != "" {
+			os.Remove(marker)
+		}
+		var newPaths []string
+		if u.isFiles {
+			for rel := range u.files {
+				newPaths = append(newPaths, join(u.target, filepath.FromSlash(rel)))
+			}
+		} else {
+			newPaths = []string{u.target}
+		}
+		for _, p := range newPaths {
+			committed[strings.ToLower(filepath.Clean(p))] = true
 		}
 		// 4. The old files are no longer needed.
 		for _, m := range asideMoves {
 			if err := os.RemoveAll(m[1]); err != nil {
 				logf("could not delete the old %s: %v", m[1], err)
 			}
+		}
+		for _, a := range aside {
+			if a.stop != "" {
+				removeEmptyParents(filepath.Dir(a.path), a.stop) // a folder in a pack that only held the old copy
+			}
+		}
+		res.Notes = append(res.Notes, notes...)
+		if len(wholeOld) > 0 {
+			replaced = append(replaced, replacement{old: wholeOld, paths: newPaths})
 		}
 		if u.kind == "script" {
 			if !isFile(join(u.target, "enabled.txt")) && !isFile(join(u.target, "enabled.off")) {
@@ -892,24 +1234,24 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 		switch {
 		case u.kind == "script":
 			dated[scriptDateKey(u.name)] = updated
-		case u.isFiles:
-			for rel := range u.files {
+		case u.isFiles && !merge:
+			for _, p := range newPaths {
 				datedPaks = append(datedPaks, struct {
 					path    string
 					updated bool
-				}{join(u.target, filepath.FromSlash(rel)), updated})
+				}{p, updated || replacedOlder})
 			}
 		default:
 			datedPaks = append(datedPaks, struct {
 				path    string
 				updated bool
-			}{u.target, updated || len(older) > 0})
+			}{u.target, updated || replacedOlder})
 		}
 		label := u.name
 		if u.kind == "script" {
 			label += " (script mod)"
 		}
-		if updated {
+		if updated || replacedOlder {
 			res.Updated = append(res.Updated, label)
 		} else {
 			res.Added = append(res.Added, label)
@@ -918,6 +1260,7 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 	if needsBPModLoader && !isDir(join(at.ue, "Mods", "BPModLoaderMod")) {
 		res.Notes = append(res.Notes, "LogicMods need UE4SS's BPModLoaderMod, which is not installed, so this mod won't load until it is. It comes with the full UE4SS download (ue4ss\\Mods\\BPModLoaderMod).")
 	}
+	carried := keepReplacedPlaces(at, installed, replaced)
 	g.tidyLoadOrder()
 	if len(datedPaks) > 0 {
 		now, _ := scanPakMods(at.loader, at.tilde)
@@ -929,9 +1272,383 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 			}
 		}
 	}
-	recordModDates(dated)
+	recordModDates(dated, carried)
 	logf("added from %s: added %v, updated %v, notes %v", source, res.Added, res.Updated, res.Notes)
 	return res, nil
+}
+
+// pickVersions offers a choice when a download holds several versions of one
+// mod, and keeps only the one the player picked.
+func pickVersions(units []*unit, pick []string, source string) ([]*unit, []AddChoice) {
+	want := map[string]bool{}
+	for _, p := range pick {
+		want[p] = true
+	}
+	keep := func(ok func(u *unit) bool) []*unit {
+		var out []*unit
+		for _, u := range units {
+			if ok(u) {
+				out = append(out, u)
+			}
+		}
+		return out
+	}
+	// the same files from several folders of the download ("Option A\~mods\…", "Option B\~mods\…")
+	if ch := altChoices(units, source); len(ch) > 0 {
+		if pick == nil {
+			return units, ch
+		}
+		return keep(func(u *unit) bool { return !u.alt || want["from:"+strings.ToLower(u.pre)] }), nil
+	}
+	// several mod folders that change the same game files, or have the same file names
+	var cands []*unit
+	for _, u := range units {
+		if choosable(u) {
+			cands = append(cands, u)
+		}
+	}
+	if pick == nil {
+		if len(cands) < 2 || !looksLikeVersions(cands) {
+			return units, nil
+		}
+		var ch []AddChoice
+		for _, u := range cands {
+			var fl []string
+			for n := range u.files {
+				fl = append(fl, n)
+			}
+			sort.Strings(fl)
+			ch = append(ch, AddChoice{ID: u.id, Name: u.name, Files: fl})
+		}
+		return units, ch
+	}
+	return keep(func(u *unit) bool { return !choosable(u) || want[u.id] }), nil
+}
+
+// choosable: a mod folder that can be one of several versions in a download.
+// Loose files in ~mods or LogicMods are not: several of them in one download
+// are usually parts of one mod, like the files of one folder.
+func choosable(u *unit) bool {
+	return (u.kind == "pak" || u.kind == "tilde" || u.kind == "logic") && !u.alt && len(unitKeys(u)) > 0
+}
+
+// altChoices: one choice per folder of the download that holds a version.
+func altChoices(units []*unit, source string) []AddChoice {
+	var pres []string
+	files := map[string][]string{}
+	for _, u := range units {
+		if !u.alt {
+			continue
+		}
+		k := strings.ToLower(u.pre)
+		if _, ok := files[k]; !ok {
+			pres = append(pres, u.pre)
+		}
+		for n := range u.files {
+			files[k] = append(files[k], n)
+		}
+	}
+	names := map[string]int{}
+	for _, p := range pres {
+		names[strings.ToLower(path.Base(p))]++
+	}
+	var out []AddChoice
+	for _, p := range pres {
+		name := path.Base(p)
+		switch {
+		case p == "":
+			name = source
+		case names[strings.ToLower(name)] > 1:
+			name = strings.ReplaceAll(p, "/", " - ")
+		}
+		fl := files[strings.ToLower(p)]
+		sort.Strings(fl)
+		out = append(out, AddChoice{ID: "from:" + strings.ToLower(p), Name: name, Files: fl})
+	}
+	return out
+}
+
+// asideItem is something an update sets aside: where it is, how to name it in a
+// message, and (for files taken out of a folder that stays) that folder.
+type asideItem struct{ path, what, stop string }
+
+// replacement: older copies of a mod that were replaced, as a whole, by the new
+// copy at paths.
+type replacement struct {
+	old   []*PakMod
+	paths []string
+}
+
+// unitKeys are the names (as containerKey) of every .utoc, .ucas, .pak and .sig
+// file of a unit.
+func unitKeys(u *unit) map[string]bool {
+	out := map[string]bool{}
+	for n := range u.files {
+		if isContainerFile(n) {
+			out[containerKey(path.Base(n))] = true
+		}
+	}
+	return out
+}
+
+// folderKeys are the names (as containerKey) of the .utoc, .ucas, .pak and .sig
+// files in a folder; with skipped, also those in folders the Mod Loader skips
+// (an "old" or "backup" folder the player made).
+func folderKeys(dir string, skipped bool) map[string]bool {
+	out := map[string]bool{}
+	filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		switch {
+		case err != nil:
+			return nil
+		case info.IsDir():
+			if !skipped && p != dir && isSkippedDir(info.Name()) {
+				return filepath.SkipDir
+			}
+		case isContainerFile(info.Name()):
+			out[containerKey(info.Name())] = true
+		}
+		return nil
+	})
+	return out
+}
+
+// matchingFiles are the files of the containers named in keys, in dir and the
+// folders in it that the Mod Loader reads.
+func matchingFiles(dir string, keys map[string]bool) []string {
+	var out []string
+	if len(keys) == 0 {
+		return nil
+	}
+	filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		switch {
+		case err != nil:
+			return nil
+		case info.IsDir():
+			if p != dir && isSkippedDir(info.Name()) {
+				return filepath.SkipDir
+			}
+		case isContainerFile(info.Name()) && keys[containerKey(info.Name())]:
+			out = append(out, p)
+		}
+		return nil
+	})
+	return out
+}
+
+// containerNames are the mods (.utoc and *_P.pak names) in dir that are not in keys.
+func containerNames(dir string, keys map[string]bool) []string {
+	seen := map[string]bool{}
+	var out []string
+	filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		switch {
+		case err != nil:
+			return nil
+		case info.IsDir():
+			if p != dir && isSkippedDir(info.Name()) {
+				return filepath.SkipDir
+			}
+		case strings.HasSuffix(strings.ToLower(info.Name()), ".utoc") || isPakName(info.Name()):
+			if k := containerKey(info.Name()); !keys[k] && !seen[k] {
+				seen[k] = true
+				out = append(out, strings.TrimSuffix(info.Name(), filepath.Ext(info.Name())))
+			}
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out
+}
+
+func overlap(a, b map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	for k := range a {
+		if b[k] {
+			out[k] = true
+		}
+	}
+	return out
+}
+
+// keysWithin: every key of a is in b.
+func keysWithin(a, b map[string]bool) bool {
+	for k := range a {
+		if !b[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// pickTarget decides where a mod folder goes when a folder with its name is
+// already there. It is an update of that folder only when the folder holds at
+// least one of the same .utoc/.ucas/.pak names, that is when it is plausibly the
+// same mod. A different mod that only has the same folder name (often a generic
+// one, "Paks" or "New mod") is never replaced: the new one goes to "Name (2)".
+// When the folder holds other mods as well (a pack, or a folder the player made),
+// merge is true: only the matching files in it are replaced and the rest stays.
+func pickTarget(u *unit, uk map[string]bool, committed map[string]bool) (merge bool, note string) {
+	parent, first := filepath.Dir(u.target), u.name
+	for n := 1; n < 1000; n++ {
+		name := first
+		if n > 1 {
+			name = fmt.Sprintf("%s (%d)", first, n)
+		}
+		t := join(parent, name)
+		if committed[strings.ToLower(filepath.Clean(t))] {
+			continue // another part of this download went there
+		}
+		free := !lexists(t) || (isDir(t) && !hasFiles(t))
+		if !free && len(overlap(folderKeys(t, false), uk)) == 0 {
+			continue
+		}
+		if n > 1 {
+			note = "A different mod called " + first + " is already installed, so this one was added as " + name + ". If it is in fact a newer version of " + first + ", remove the old one on the Mods page."
+		}
+		u.name, u.target = name, t
+		return !free && !keysWithin(folderKeys(t, true), uk), note
+	}
+	return false, ""
+}
+
+// olderCopies finds this mod installed under another name: a mod elsewhere that
+// has one of the unit's containers. A mod whose files the new download all has
+// is replaced as a whole. A folder that holds other mods as well (a pack, or a
+// folder the player made, such as "~mods\Skins") keeps them: only the matching
+// containers' files in it are replaced, never the whole folder.
+func olderCopies(u *unit, installed []*PakMod) (aside []asideItem, notes []string, whole []*PakMod) {
+	ck := map[string]bool{}
+	for _, n := range u.utocs {
+		ck[containerKey(n)] = true
+	}
+	uk := unitKeys(u)
+	seen := map[string]bool{}
+	for _, m := range installed {
+		if samePath(m.Path, u.target) || seen[strings.ToLower(m.Path)] || !exists(m.Path) {
+			continue
+		}
+		if u.isFiles && m.IsFile && samePath(filepath.Dir(m.Path), u.target) {
+			continue // a loose file with the same name: replaced with the unit's own files
+		}
+		matched := map[string]bool{}
+		var names []string
+		for _, c := range m.Containers {
+			if k := containerKey(c.Name); ck[k] && !matched[k] {
+				matched[k] = true
+				names = append(names, strings.TrimSuffix(c.Name, filepath.Ext(c.Name)))
+			}
+		}
+		if len(matched) == 0 {
+			continue
+		}
+		seen[strings.ToLower(m.Path)] = true
+		what := "the older copy in " + m.Key
+		switch {
+		case m.IsFile:
+			for _, p := range companions(m.Path) {
+				aside = append(aside, asideItem{path: p, what: what})
+			}
+		case keysWithin(folderKeys(m.Path, true), uk):
+			aside = append(aside, asideItem{path: m.Path, what: what})
+		default:
+			for _, p := range matchingFiles(m.Path, matched) {
+				aside = append(aside, asideItem{path: p, what: what, stop: m.Path})
+			}
+			notes = append(notes, "The older copy of "+strings.Join(names, ", ")+" in "+m.Key+" was replaced. The other mods in "+m.Key+" were kept.")
+			continue
+		}
+		whole = append(whole, m)
+		notes = append(notes, "The older copy in "+m.Key+" was replaced.")
+	}
+	return aside, notes, whole
+}
+
+// companions: a loose mod is up to four files with the same name; they go together.
+func companions(p string) []string {
+	ext := strings.ToLower(filepath.Ext(p))
+	if ext != ".utoc" && ext != ".ucas" && ext != ".pak" && ext != ".sig" {
+		return []string{p}
+	}
+	base := strings.TrimSuffix(p, filepath.Ext(p))
+	var out []string
+	for _, e := range []string{".utoc", ".ucas", ".pak", ".sig"} {
+		out = append(out, base+e)
+	}
+	return out
+}
+
+// touchesThisAdd: something to be set aside is (or holds, or is inside) what an
+// earlier part of the same add has just put in place.
+func touchesThisAdd(aside []asideItem, committed map[string]bool) bool {
+	sep := string(filepath.Separator)
+	for _, a := range aside {
+		p := strings.ToLower(filepath.Clean(a.path))
+		for c := range committed {
+			if c == p || strings.HasPrefix(c, p+sep) || strings.HasPrefix(p, c+sep) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// scriptModOff: the installed script mod is switched off, by the rule UE4SS uses
+// and the Script mods list shows: "Name : 0" in mods.txt, or no enabled.txt
+// unless mods.txt says "Name : 1".
+func scriptModOff(dir, name string) bool {
+	on, listed := modsTxtState(filepath.Dir(dir))[strings.ToLower(name)]
+	return !((listed && on) || (isFile(join(dir, "enabled.txt")) && !(listed && !on)))
+}
+
+// keepReplacedPlaces gives an updated mod whose folder has another name now
+// ("Hornet v1" became "Hornet v2") the old one's place in the load order and its
+// on/off state, so an update never switches a mod back on or makes it win
+// conflicts it used to lose. It returns, for the mod dates, new key -> old key.
+func keepReplacedPlaces(at addPlaces, before []*PakMod, reps []replacement) map[string]string {
+	carried := map[string]string{}
+	if len(reps) == 0 || !isDir(at.loader) {
+		return carried
+	}
+	now, _ := scanPakMods(at.loader, at.tilde)
+	newKey := map[string]string{} // old key (lower case) -> new key
+	for _, r := range reps {
+		key := ""
+		for _, m := range now {
+			for _, p := range r.paths {
+				if key == "" && samePath(m.Path, p) {
+					key = m.Key
+				}
+			}
+		}
+		if key == "" {
+			continue
+		}
+		for _, o := range r.old {
+			newKey[strings.ToLower(o.Key)] = key
+			if _, ok := carried[pakDateKey(key)]; !ok {
+				carried[pakDateKey(key)] = pakDateKey(o.Key)
+			}
+		}
+	}
+	if len(newKey) == 0 {
+		return carried
+	}
+	var entries []orderEntry
+	placed := map[string]bool{}
+	for _, m := range before {
+		key := m.Key
+		if k, ok := newKey[strings.ToLower(m.Key)]; ok {
+			key = k
+		}
+		if placed[strings.ToLower(key)] {
+			continue
+		}
+		placed[strings.ToLower(key)] = true
+		entries = append(entries, orderEntry{Key: key, Enabled: m.Enabled})
+	}
+	if err := writeLoadOrder(at.loader, keepSkinListLast(entries)); err != nil {
+		logf("could not keep the load order place of an updated mod: %v", err)
+	}
+	return carried
 }
 
 func hasFileFold(m map[string]incoming, name string) bool {
@@ -947,13 +1664,13 @@ func samePath(a, b string) bool {
 	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
 
-// looksLikeVersions: several pak mods in one download are usually alternatives
+// looksLikeVersions: several mod folders in one download are usually alternatives
 // ("Blue", "Red") when they replace the same game files, or have the same file names.
 func looksLikeVersions(paks []*unit) bool {
 	names := map[string]int{}
 	for _, u := range paks {
-		for _, n := range u.utocs {
-			names[containerKey(n)]++
+		for k := range unitKeys(u) {
+			names[k]++
 		}
 	}
 	for _, c := range names {
