@@ -59,7 +59,7 @@ ACE8 Mod Launcher <version> Linux\
 War’s Mod Loader <loader>\        the same as in the Windows zip
 ```
 
-The launcher's **Install** looks for a folder next to its own that has
+The launcher's **Set up modding** looks for a folder next to its own that has
 `Game\Binaries\Win64\dwmapi.dll` and `...\IoStoreLoaderMod\dlls\main.dll`, and uses
 the newest Mod Loader it finds, so keep the two folders side by side in the zip.
 
@@ -70,6 +70,10 @@ Mod Loader folder; the launcher replaces them.
 
 - Run the Windows exe once on a real PC: switch both ways, start Modded and check
   Last game start.
+- Check the first start as a new player sees it: with `welcomeDone` removed from
+  `settings.json` (or a fresh data folder), the tour starts by itself and its
+  steps match the window.
+- Check that the README files and `docs/` name the buttons as the window does.
 - Search the zips for personal paths (your user name, `C:\Users\...`).
 - **Antivirus:** each build is a new, unknown file to reputation checks. Submit the
   final exe as a false positive to Microsoft

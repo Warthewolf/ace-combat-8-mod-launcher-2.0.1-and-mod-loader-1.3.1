@@ -131,7 +131,8 @@ always decides.
 
 ## Testing your mod
 
-Start the game Modded, then open **Mod Loader log** in the launcher. Your mod
+Start the game Modded, then press **Mod Loader log** in the launcher (on the Play
+page under **Last game start**, or in Settings, Support). Your mod
 should show `result code=0` (a `.utoc`) or `Legacy result AL=1 pak-in-table=1`
 (a `_P.pak`). The `package store:` line shows how many of its files are new to the
 game. See [Troubleshooting](troubleshooting.md#what-the-mod-loaders-log-lines-mean).
