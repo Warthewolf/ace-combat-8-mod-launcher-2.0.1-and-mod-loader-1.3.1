@@ -3,6 +3,11 @@ package main
 // A reader for the parts of an IoStore table of contents (.utoc) the launcher
 // needs: which packages a container holds (to spot two mods changing the same
 // game file) and the file names (to show what a mod changes).
+//
+// The file comes from a download, so nothing in it is trusted: every count and
+// offset is checked against the bytes really there before it is used, each
+// directory and file entry is visited once at most, and a damaged file gives
+// fewer names or none, never a hang, a crash or a huge allocation.
 
 import (
 	"encoding/binary"
@@ -22,12 +27,20 @@ type utocInfo struct {
 
 var utocMagic = []byte("-==--==--==--==-")
 
+const (
+	maxUtocSize    = 64 << 20 // no real mod's .utoc is near this
+	maxUtocPathLen = 1024     // longer paths are damage, not file names
+	maxUtocNameLen = 1 << 16  // one directory or file name
+	maxUtocDepth   = 64       // folders inside folders
+	maxUtocPathSum = 16 << 20 // all file paths together, in bytes
+)
+
 func readUtoc(p string) (*utocInfo, error) {
 	st, err := os.Stat(p)
 	if err != nil {
 		return nil, err
 	}
-	if st.Size() > 64<<20 {
+	if st.Size() > maxUtocSize {
 		return nil, errors.New("too big")
 	}
 	d, err := os.ReadFile(p)
@@ -56,34 +69,50 @@ func parseUtoc(d []byte) (*utocInfo, error) {
 	if hdrSize < 144 || entries > 1<<22 || blocks > 1<<26 {
 		return nil, errors.New("unexpected .utoc header")
 	}
-	need := uint64(hdrSize) + uint64(entries)*12
-	if need > uint64(len(d)) {
+	n := uint64(len(d))
+	if need := uint64(hdrSize) + uint64(entries)*12; need > n {
 		return nil, errors.New("short .utoc")
 	}
-	u := &utocInfo{files: map[uint32]string{}}
+	u := &utocInfo{files: map[uint32]string{}, chunkIDs: make([]uint64, 0, entries), types: make([]byte, 0, entries)}
 	o := uint64(hdrSize)
 	for i := uint32(0); i < entries; i++ {
 		u.chunkIDs = append(u.chunkIDs, le.Uint64(d[o:]))
 		u.types = append(u.types, d[o+11])
 		o += 12
 	}
-	o += uint64(entries) * 10 // offsets and lengths
-	if ver >= 4 {
-		o += uint64(seeds) * 4
+	// skip moves past count items of size bytes each; false when they would run
+	// past the end of the file. o <= n holds throughout, so n-o never wraps.
+	skip := func(count, size uint32) bool {
+		if size != 0 && uint64(count) > (n-o)/uint64(size) {
+			return false
+		}
+		o += uint64(count) * uint64(size)
+		return true
 	}
-	if ver >= 5 {
-		o += uint64(noHash) * 4
+	if !skip(entries, 10) { // offsets and lengths
+		return u, nil
 	}
-	o += uint64(blocks)*uint64(blockSize) + uint64(methods)*uint64(methodLen)
+	if ver >= 4 && !skip(seeds, 4) {
+		return u, nil
+	}
+	if ver >= 5 && !skip(noHash, 4) {
+		return u, nil
+	}
+	if !skip(blocks, blockSize) || !skip(methods, methodLen) {
+		return u, nil
+	}
 	const flagEncrypted, flagSigned, flagIndexed = 0x2, 0x4, 0x8
 	if flags&flagSigned != 0 {
-		if o+4 > uint64(len(d)) {
+		if n-o < 4 {
 			return u, nil
 		}
-		hs := uint64(le.Uint32(d[o:]))
-		o += 4 + 2*hs + uint64(blocks)*20
+		hs := le.Uint32(d[o:])
+		o += 4
+		if !skip(2, hs) || !skip(blocks, 20) {
+			return u, nil
+		}
 	}
-	if flags&flagIndexed == 0 || flags&flagEncrypted != 0 || dirIndexSize == 0 || o+uint64(dirIndexSize) > uint64(len(d)) {
+	if flags&flagIndexed == 0 || flags&flagEncrypted != 0 || dirIndexSize == 0 || uint64(dirIndexSize) > n-o {
 		return u, nil
 	}
 	u.readDirectoryIndex(d[o : o+uint64(dirIndexSize)])
@@ -95,7 +124,7 @@ func (u *utocInfo) readDirectoryIndex(d []byte) {
 	o := 0
 	ok := true
 	u32 := func() uint32 {
-		if o+4 > len(d) {
+		if !ok || len(d)-o < 4 {
 			ok = false
 			return 0
 		}
@@ -103,17 +132,21 @@ func (u *utocInfo) readDirectoryIndex(d []byte) {
 		o += 4
 		return v
 	}
+	// fits: count items of size bytes each are really there
+	fits := func(count uint32, size int) bool {
+		return ok && uint64(count)*uint64(size) <= uint64(len(d)-o)
+	}
 	str := func() string {
 		n := int32(u32())
 		if !ok || n == 0 {
 			return ""
 		}
-		if n > 1<<16 || n < -(1<<16) { // no real file name is this long: a damaged file
+		if n > maxUtocNameLen || n < -maxUtocNameLen { // no real file name is this long: a damaged file
 			ok = false
 			return ""
 		}
 		if n > 0 {
-			if o+int(n) > len(d) {
+			if int(n) > len(d)-o {
 				ok = false
 				return ""
 			}
@@ -122,7 +155,7 @@ func (u *utocInfo) readDirectoryIndex(d []byte) {
 			return s
 		}
 		n = -n
-		if o+2*int(n) > len(d) {
+		if 2*int(n) > len(d)-o {
 			ok = false
 			return ""
 		}
@@ -134,30 +167,30 @@ func (u *utocInfo) readDirectoryIndex(d []byte) {
 		return string(utf16.Decode(w))
 	}
 	mount := str()
-	nd := int(u32())
-	if !ok || nd > 1<<20 {
+	nd := u32()
+	if !fits(nd, 16) {
 		return
 	}
 	type dirE struct{ name, child, sibling, file uint32 }
-	dirs := make([]dirE, 0, nd)
-	for i := 0; i < nd; i++ {
-		dirs = append(dirs, dirE{u32(), u32(), u32(), u32()})
+	dirs := make([]dirE, nd)
+	for i := range dirs {
+		dirs[i] = dirE{u32(), u32(), u32(), u32()}
 	}
-	nf := int(u32())
-	if !ok || nf > 1<<22 {
+	nf := u32()
+	if !fits(nf, 12) {
 		return
 	}
 	type fileE struct{ name, next, data uint32 }
-	files := make([]fileE, 0, nf)
-	for i := 0; i < nf; i++ {
-		files = append(files, fileE{u32(), u32(), u32()})
+	files := make([]fileE, nf)
+	for i := range files {
+		files[i] = fileE{u32(), u32(), u32()}
 	}
-	ns := int(u32())
-	if !ok || ns > 1<<22 {
+	ns := u32()
+	if !fits(ns, 4) { // each string takes at least its 4-byte length
 		return
 	}
 	strs := make([]string, 0, ns)
-	for i := 0; i < ns && ok; i++ {
+	for i := uint32(0); i < ns && ok; i++ {
 		strs = append(strs, str())
 	}
 	if !ok || len(dirs) == 0 {
@@ -165,28 +198,69 @@ func (u *utocInfo) readDirectoryIndex(d []byte) {
 	}
 	const none = 0xFFFFFFFF
 	name := func(i uint32) string {
-		if int(i) < len(strs) {
+		if uint64(i) < uint64(len(strs)) {
 			return strs[i]
 		}
 		return ""
 	}
-	var walk func(i uint32, p string, depth int)
-	walk = func(i uint32, p string, depth int) {
-		if depth > 64 || int(i) >= len(dirs) {
-			return
-		}
-		dn := dirs[i]
+	// Walk the tree with a stack of its own, not recursion. A damaged or crafted
+	// index can link a folder back to itself, to a parent or to another branch,
+	// so each folder is queued once at most and each file entry is read once at
+	// most: the work is bounded by the counts, which are bounded by the file's
+	// size. The paths built along the way have a budget too.
+	queued := make([]bool, len(dirs))
+	seenFile := make([]bool, len(files))
+	type item struct {
+		dir   uint32
+		path  string
+		depth int
+	}
+	queued[0] = true
+	stack := []item{{0, mount, 0}}
+	budget := maxUtocPathSum
+	var kids []uint32
+	for len(stack) > 0 {
+		it := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		dn := dirs[it.dir]
+		p := it.path
 		if dn.name != none {
 			p += name(dn.name) + "/"
 		}
-		for f, n := dn.file, 0; f != none && int(f) < len(files) && n < len(files); f, n = files[f].next, n+1 {
-			u.files[files[f].data] = p + name(files[f].name)
+		if len(p) > maxUtocPathLen {
+			continue
 		}
-		for c, n := dn.child, 0; c != none && int(c) < len(dirs) && n < len(dirs); c, n = dirs[c].sibling, n+1 {
-			walk(c, p, depth+1)
+		if budget -= len(p); budget < 0 {
+			return
+		}
+		for f := dn.file; f != none && uint64(f) < uint64(len(files)) && !seenFile[f]; f = files[f].next {
+			seenFile[f] = true
+			fe := files[f]
+			if uint64(fe.data) >= uint64(len(u.types)) {
+				continue // names a chunk the container doesn't have
+			}
+			full := p + name(fe.name)
+			if len(full) > maxUtocPathLen {
+				continue
+			}
+			if budget -= len(full); budget < 0 {
+				return
+			}
+			u.files[fe.data] = full
+		}
+		if it.depth >= maxUtocDepth {
+			continue
+		}
+		// the children, in their own order: push the sibling chain in reverse
+		kids = kids[:0]
+		for c := dn.child; c != none && uint64(c) < uint64(len(dirs)) && !queued[c]; c = dirs[c].sibling {
+			queued[c] = true
+			kids = append(kids, c)
+		}
+		for i := len(kids) - 1; i >= 0; i-- {
+			stack = append(stack, item{kids[i], p, it.depth + 1})
 		}
 	}
-	walk(0, mount, 0)
 }
 
 // packageIDs are the packages whose data the container replaces or adds.
