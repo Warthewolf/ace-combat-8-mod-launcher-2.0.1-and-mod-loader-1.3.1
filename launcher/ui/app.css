@@ -134,6 +134,7 @@ p { margin: 0 0 8px; }
 .hint { margin: -10px 0 0; font-size: 13.5px; color: var(--muted); }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
 .row.end { justify-content: flex-end; }
+.row:empty { display: none; }
 
 /* ---------- buttons ---------- */
 .btn { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -282,7 +283,8 @@ p { margin: 0 0 8px; }
 .toggle[aria-checked="true"]::before { content: "On"; }
 .toggle:hover { border-color: var(--hud); }
 .toggle:focus-visible { outline: 2px solid var(--hud); outline-offset: 2px; }
-.toggle:disabled { opacity: .4; cursor: not-allowed; }
+.toggle:disabled, .toggle[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+.busy, .btn.busy { cursor: progress; }
 
 .main-col { min-width: 0; }
 .name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
@@ -320,7 +322,6 @@ details.removed > summary:focus-visible, details.adv > summary:focus-visible { o
 .banner p { margin: 0 0 6px; }
 .banner p:last-of-type { margin-bottom: 0; }
 .banner .row { margin-top: 10px; }
-.banner .row:empty { display: none; }
 
 /* ---------- settings ---------- */
 .path { font-size: 13.5px; overflow-wrap: anywhere; color: var(--ink); }
@@ -341,6 +342,7 @@ code.cmd { display: block; margin: 8px 0 2px; padding: 8px 12px; font: 12.5px/1.
 .checks .y { color: var(--green); } .checks .n { color: var(--red); } .checks .w { color: var(--caution); }
 .storage-warn { color: var(--caution); }
 #storageNote { margin-top: 6px; }
+#linuxOpts .row + .fine { margin-top: 10px; }
 
 /* ---------- help ---------- */
 .help details { border-bottom: 1px solid var(--line); }

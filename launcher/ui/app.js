@@ -59,21 +59,24 @@ async function openLink(url) {
   } catch (e) { toast(e.message, 'bad'); }
 }
 
-// A button whose action is running is switched off (with a label saying so) until it is done;
-// pressing it again meanwhile does nothing.
+// A button whose action is running looks switched off (with a label saying so) until it is done;
+// pressing it again meanwhile does nothing. It keeps keyboard focus (aria-disabled, not disabled).
 const inFlight = new Set();
 async function withBusy(btn, key, label, fn) {
   if (inFlight.has(key)) return undefined;
   inFlight.add(key);
   const old = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; if (label) btn.textContent = label; }
+  if (btn) markBusy(btn, key, label);
   try { return await fn(); } finally {
     inFlight.delete(key);
-    if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = old; }
+    if (btn && btn.isConnected) { btn.removeAttribute('aria-disabled'); btn.classList.remove('busy'); if (label) btn.textContent = old; }
   }
 }
 function markBusy(btn, key, label) {
-  if (inFlight.has(key)) { btn.disabled = true; if (label) btn.textContent = label; }
+  if (!inFlight.has(key)) return;
+  btn.setAttribute('aria-disabled', 'true');
+  btn.classList.add('busy');
+  if (label) btn.textContent = label;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -346,7 +349,6 @@ function renderPlay() {
     else if (m === 'unmodded') note.textContent = 'Mods are switched off and kept in the mod storage folder.';
     else note.textContent = '';
   }
-  for (const b of $$('.mode-opt')) b.setAttribute('aria-disabled', String(!!(st.gameRunning || busyLocal || st.busy)));
   renderPlayBar();
   renderTodo();
   renderLastRun();
@@ -363,6 +365,7 @@ function renderPlayBar() {
   play.classList.toggle('quiet', m === 'none');
   $('#playLabel').textContent = st.gameRunning ? 'Game running' : playing || starting ? 'Starting…' : m === 'mixed' ? 'Play' : modded ? 'Play modded' : 'Play unmodded';
   play.disabled = !!(st.gameRunning || st.busy || busyLocal || m === 'mixed' || playing || starting);
+  for (const b of $$('.mode-opt')) b.setAttribute('aria-disabled', String(!!(st.gameRunning || busyLocal || st.busy || playing || starting)));
   $('#playHow').hidden = m === 'mixed';
   $('#playHow').textContent = modded ? (isLinux() ? 'Starts through Steam with anti-cheat off. Offline and single player only.' : 'Anti-cheat off. Offline and single player only.') : 'Starts through Steam with anti-cheat on.';
   renderLive();
@@ -545,6 +548,7 @@ for (const b of $$('.mode-opt')) b.onclick = () => {
     const st = STATUS || STATE.status;
     if (st.gameRunning) { $('#modeNote').textContent = 'Close the game first, then switch.'; $('#modeNote').classList.add('bad'); }
     else if (st.busy && !busyLocal) { $('#modeNote').textContent = 'One moment: the launcher is ' + st.busy + '.'; }
+    else if (playing || launchStarting()) { $('#modeNote').textContent = 'One moment: the game is starting.'; }
     return;
   }
   if (m === want && m !== 'mixed') return;
@@ -1006,7 +1010,7 @@ function removedRow(r) {
   if (r.kind !== 'modloader') {
     const rs = el('<button class="btn small" data-ctl="restore" title="Put it back in the game">Restore</button>');
     rs.onclick = () => {
-      if (rs.getAttribute('aria-disabled') === 'true') { toast(GAME_RUNNING, 'warn'); return; }
+      if (gameRunningNow()) { toast(GAME_RUNNING, 'warn'); return; }
       withBusy(rs, 'restore:' + r.id, 'Restoring…', async () => { if (await act('restore', { id: r.id })) toast(`${shortKey(r.name)} is back.`); });
     };
     gameLock(rs);
@@ -1015,6 +1019,7 @@ function removedRow(r) {
   }
   const del = el('<button class="btn small danger" data-ctl="delete" title="Delete its files for good">Delete</button>');
   del.onclick = async () => {
+    if (inFlight.has('delete:' + r.id)) return;
     const v = await dialog({ title: 'Delete ' + shortKey(r.name) + '?', html: '<p>Its files are deleted from the mod storage folder. This can\'t be undone.</p>', buttons: [{ label: 'Keep it', value: 'no', kind: 'ghost' }, { label: 'Delete', value: 'yes', kind: 'danger' }] });
     if (v !== 'yes') return;
     await withBusy(del, 'delete:' + r.id, 'Deleting…', async () => { if (await act('delete-removed', { id: r.id })) toast(shortKey(r.name) + ' was deleted.'); });
@@ -1029,8 +1034,13 @@ async function removeMod(kind, key, btn) {
   if (gameRunningNow()) { toast(GAME_RUNNING, 'warn'); return; }
   await withBusy(btn, 'remove:' + kind + ':' + key, 'Removing…', async () => {
     const before = order.map(o => ({ ...o }));
+    // the row goes away: keyboard focus moves to the row after it (or before it)
+    const li = btn && btn.closest('li.item'), hadFocus = !!(li && li.contains(document.activeElement));
+    const list = li && li.parentElement.id, near = li && (li.nextElementSibling || li.previousElementSibling);
+    const nearKey = near && near.dataset.key;
     const dir = await act('remove', { kind, key });
     if (!dir) return;
+    if (hadFocus && nearKey && (!document.activeElement || document.activeElement === document.body)) restoreFocus({ list, key: nearKey, ctl: 'remove' });
     const id = baseName(dir);
     toast(`${shortKey(key)} moved to Removed mods.`, 'ok', { action: { label: 'Undo', fn: async () => {
       if (!await act('restore', { id })) return;
