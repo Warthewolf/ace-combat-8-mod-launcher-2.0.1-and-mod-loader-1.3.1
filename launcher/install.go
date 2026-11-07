@@ -1084,10 +1084,13 @@ func (g Game) tidyLoadOrder() {
 // ---- removing and restoring ------------------------------------------------------
 
 type removedInfo struct {
-	Kind    string    `json:"kind"`
-	Name    string    `json:"name"`
-	From    string    `json:"from"`
-	Files   []string  `json:"files,omitempty"` // for a mod that was loose files
+	Kind  string   `json:"kind"`
+	Name  string   `json:"name"`
+	From  string   `json:"from"`
+	Files []string `json:"files,omitempty"` // for a mod that was loose files
+	// Rel is From inside the game folder ("Game/Content/Paks/~mods/…"), so the
+	// mod still finds its way back after the game or the storage folder moved.
+	Rel     string    `json:"rel,omitempty"`
 	Removed time.Time `json:"removed"`
 }
 
@@ -1115,6 +1118,9 @@ func (g Game) removeToStorage(kind, name, p string, looseFile bool) (string, err
 		return "", err
 	}
 	ri := removedInfo{Kind: kind, Name: name, From: p, Removed: time.Now()}
+	if rel, ok := g.gameRel(p); ok {
+		ri.Rel = filepath.ToSlash(rel)
+	}
 	giveUp := func(err error) (string, error) {
 		os.Remove(join(dir, "removed.json"))
 		os.Remove(dir)
@@ -1187,7 +1193,8 @@ func (g Game) removedEntry(id string) (string, removedInfo, error) {
 }
 
 // restoreRemoved puts a removed mod back where it was. If the game was switched
-// in the meantime, it goes to where that folder is now.
+// in the meantime, it goes where that folder is now: into the game while
+// Modded, into "Switched off" while Unmodded. It goes back whole or not at all.
 func (g Game) restoreRemoved(id string) error {
 	if gameRunning() {
 		return errGameRunning
@@ -1199,6 +1206,9 @@ func (g Game) restoreRemoved(id string) error {
 	if ri.Kind == "modloader" {
 		return errors.New("an old Mod Loader is kept only as a backup; copy its main.dll by hand if you really need it")
 	}
+	if g.modeInfo().Mode == modeMixed {
+		return errors.New("the last switch did not finish. Press Modded or Unmodded on the Play page first, then restore the mod")
+	}
 	if ri.Kind == "shared" {
 		if err := g.restoreShared(dir, ri); err != nil {
 			return err
@@ -1206,24 +1216,45 @@ func (g Game) restoreRemoved(id string) error {
 		logf("restored %s", ri.Name)
 		return nil
 	}
-	from := g.relocate(ri.From)
+	from := ri.From
+	if ri.Rel != "" {
+		from = join(g.Root, filepath.FromSlash(ri.Rel))
+	}
+	to := g.relocate(from)
+	if !isInside(to, g.Root) && !isInside(to, g.OffDir()) {
+		return fmt.Errorf("the launcher can't tell where %s goes back to: it came from %s, which is not part of this game folder. Its files are kept in %s", ri.Name, filepath.Dir(ri.From), dir)
+	}
+	type move struct{ from, to string }
+	var moves []move
 	if len(ri.Files) > 0 {
+		// a loose mod: its files go back next to each other
 		for _, f := range ri.Files {
-			if exists(g.relocate(f)) {
-				return errors.New(filepath.Base(f) + " is installed again already. Remove it first if you want this copy back")
+			if src := join(dir, filepath.Base(f)); lexists(src) { // not there: put back by an earlier try that stopped part way
+				moves = append(moves, move{src, join(filepath.Dir(to), filepath.Base(f))})
 			}
 		}
-		for _, f := range ri.Files {
-			if err := moveItem(join(dir, filepath.Base(f)), g.relocate(f)); err != nil {
-				return err
+	} else if src := join(dir, filepath.Base(ri.From)); lexists(src) {
+		moves = append(moves, move{src, to})
+	}
+	if len(moves) == 0 {
+		return fmt.Errorf("the files of %s are no longer in the storage folder (%s)", ri.Name, dir)
+	}
+	for _, m := range moves {
+		if lexists(m.to) {
+			return errors.New(filepath.Base(m.to) + " is installed again already. Remove that one first if you want this copy back")
+		}
+	}
+	for i, m := range moves {
+		if err := moveItem(m.from, m.to); err != nil {
+			// put back what already moved, so the mod is never left half restored
+			back := " Nothing was changed."
+			for k := i - 1; k >= 0; k-- {
+				if berr := moveItem(moves[k].to, moves[k].from); berr != nil {
+					logf("restore: could not put %s back: %v", moves[k].to, berr)
+					back = " Part of it is back in the game already; remove it from the Mods page and try again."
+				}
 			}
-		}
-	} else {
-		if exists(from) {
-			return errors.New(filepath.Base(from) + " is installed again already. Remove that one first if you want this copy back")
-		}
-		if err := moveItem(join(dir, filepath.Base(from)), from); err != nil {
-			return err
+			return fmt.Errorf("%s would not move %s back into %s. %s%s", sysName, filepath.Base(m.from), filepath.Dir(m.to), explainMoveError(err), back)
 		}
 	}
 	os.Remove(join(dir, "removed.json"))
@@ -1231,26 +1262,65 @@ func (g Game) restoreRemoved(id string) error {
 	if ri.Kind == "pak" || ri.Kind == "tilde" {
 		g.tidyLoadOrder()
 	}
-	logf("restored %s to %s", ri.Name, from)
+	logf("restored %s to %s", ri.Name, to)
 	return nil
 }
 
-// relocate maps a path inside the game to where it is now (the ue4ss folder or
-// ~mods may have been switched off since, or switched back on).
+// relocate maps a path inside the game, or inside its switched-off copy, to
+// where it goes now. A folder that has files on one side only stays on that
+// side. When it has none (the last mod in ~mods was removed and the empty
+// folder tidied away), the mode decides, as for adding a mod: Unmodded puts it
+// in "Switched off", Modded in the game.
 func (g Game) relocate(p string) string {
+	rel, ok := g.gameRel(p)
+	if !ok {
+		return p
+	}
+	inGameAt := join(g.Root, rel)
 	for _, it := range parkItems {
 		gp, pp := g.itemPaths(it)
-		for _, pair := range [][2]string{{gp, pp}, {pp, gp}} {
-			if strings.HasPrefix(strings.ToLower(p), strings.ToLower(pair[0])+string(filepath.Separator)) {
-				alt := pair[1] + p[len(pair[0]):]
-				if !hasFiles(pair[0]) && hasFiles(pair[1]) {
-					return alt
-				}
-				return p
+		r, inside := relInside(inGameAt, gp)
+		if !inside || r == "" {
+			continue
+		}
+		inGame, parked := hasFiles(gp), hasFiles(pp)
+		switch {
+		case parked && !inGame:
+			return join(pp, r)
+		case inGame && !parked:
+			return join(gp, r)
+		case !inGame && !parked:
+			if g.modeInfo().Mode == modeUnmodded {
+				return join(pp, r)
 			}
+			return join(gp, r)
+		}
+		// on both sides (a switch that did not finish): the side it came from
+		if _, wasOff := relInside(p, g.OffDir()); wasOff {
+			return join(pp, r)
+		}
+		return join(gp, r)
+	}
+	return inGameAt
+}
+
+// gameRel is p as a path inside the game folder ("Game\Content\Paks\~mods\…"),
+// for a path in the game or in its switched-off copy. A path saved before the
+// game or the storage folder moved is recognised by its "Game\Binaries" or
+// "Game\Content" part.
+func (g Game) gameRel(p string) (string, bool) {
+	for _, base := range []string{g.Root, g.OffDir()} {
+		if r, ok := relInside(p, base); ok && r != "" && base != "" {
+			return r, true
 		}
 	}
-	return p
+	segs := strings.Split(filepath.Clean(p), string(filepath.Separator))
+	for i := 0; i+1 < len(segs); i++ {
+		if strings.EqualFold(segs[i], "Game") && (strings.EqualFold(segs[i+1], "Binaries") || strings.EqualFold(segs[i+1], "Content")) {
+			return filepath.Join(segs[i:]...), true
+		}
+	}
+	return "", false
 }
 
 func (g Game) deleteRemoved(id string) error {

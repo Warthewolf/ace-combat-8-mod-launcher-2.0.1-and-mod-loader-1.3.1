@@ -45,6 +45,40 @@ func (g Game) DefaultStorage() string {
 
 func (g Game) storageName() string { return filepath.Base(g.Root) + " - mod storage" }
 
+// holdsMods: the storage folder has switched-off or removed mods in it.
+func holdsMods(storage string) bool {
+	return hasFiles(join(storage, "Switched off")) || hasFiles(join(storage, "Removed mods"))
+}
+
+// keepStorageAfterMove is called when the game folder changes from oldRoot to
+// newRoot. When the game was moved (Steam's "Move install folder", a reinstall
+// to another library), the storage folder does not move with it. Without this,
+// the launcher would start with an empty storage folder next to the new place,
+// and every switched-off and removed mod would seem to be gone. So the storage
+// folder of the old place stays in use; "Use the default" in Settings moves it
+// next to the game. A game folder that is still there is another install, and
+// keeps its own storage folder.
+func keepStorageAfterMove(s *Settings, oldRoot, newRoot string) {
+	if oldRoot == "" || samePath(oldRoot, newRoot) || looksLikeGame(oldRoot) {
+		return
+	}
+	if s.StorageDir != "" && samePath(s.StorageGame, oldRoot) {
+		if isDir(s.StorageDir) && !isInside(s.StorageDir, newRoot) {
+			s.StorageGame = newRoot
+			logf("the game moved from %s to %s; the chosen storage folder %s stays in use", oldRoot, newRoot, s.StorageDir)
+		}
+		return
+	}
+	if s.StorageDir != "" && samePath(s.StorageGame, newRoot) {
+		return // a folder chosen for the new place already
+	}
+	oldDefault := Game{Root: oldRoot}.DefaultStorage()
+	if holdsMods(oldDefault) && !holdsMods(Game{Root: newRoot}.DefaultStorage()) && !isInside(oldDefault, newRoot) {
+		s.StorageDir, s.StorageGame = oldDefault, newRoot
+		logf("the game moved from %s to %s; its storage folder %s stays in use", oldRoot, newRoot, oldDefault)
+	}
+}
+
 // customStorage: the player chose the storage folder.
 func (g Game) customStorage() bool { return !samePath(g.Storage(), g.DefaultStorage()) }
 
@@ -225,7 +259,10 @@ func currentGame() (Game, bool) {
 		return Game{}, false
 	}
 	if p := detectGame(); p != "" {
-		updateSettings(func(s *Settings) { s.GameDir = p })
+		updateSettings(func(s *Settings) {
+			keepStorageAfterMove(s, s.GameDir, p)
+			s.GameDir = p
+		})
 		logf("found the game at %s", p)
 		return Game{Root: p}, true
 	}

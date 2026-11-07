@@ -263,7 +263,10 @@ func newMux(port int) http.Handler {
 			return nil, err
 		}
 		logf("game folder set to %s", p)
-		return p, updateSettings(func(s *Settings) { s.GameDir = p })
+		return p, updateSettings(func(s *Settings) {
+			keepStorageAfterMove(s, s.GameDir, p)
+			s.GameDir = p
+		})
 	})
 	act("pick-game", "waiting for you to choose the game folder", func(_ Game, r *http.Request) (any, error) {
 		start := getSettings().GameDir
@@ -281,7 +284,10 @@ func newMux(port int) http.Handler {
 			return nil, err
 		}
 		logf("game folder set to %s", root)
-		return root, updateSettings(func(s *Settings) { s.GameDir = root })
+		return root, updateSettings(func(s *Settings) {
+			keepStorageAfterMove(s, s.GameDir, root)
+			s.GameDir = root
+		})
 	})
 	act("storage", "moving the storage folder", func(g Game, r *http.Request) (any, error) {
 		var req struct {
@@ -324,8 +330,16 @@ func newMux(port int) http.Handler {
 		p := req.Path
 		switch req.What {
 		case "storage":
-			os.MkdirAll(g.Storage(), 0o755)
-			writeStorageReadme(g)
+			if g.Root == "" {
+				writeErr(w, errors.New("the launcher does not know where Ace Combat 8 is yet. Choose the game folder first"))
+				return
+			}
+			if g.storageMissing() {
+				// making a new empty folder there would hide that the real one is missing
+				writeErr(w, fmt.Errorf("the mod storage folder (%s) can't be found. Connect the drive it is on, or choose it again in Settings", g.Storage()))
+				return
+			}
+			writeStorageReadme(g) // the default folder is made the first time it is needed
 			p = g.Storage()
 		case "loader":
 			p = g.loaderDir()
@@ -472,7 +486,7 @@ func buildStatus() Status {
 	var fp strings.Builder
 	if ok {
 		for _, p := range []string{g.Root, g.Win64(), g.Paks(), g.loaderDir(), g.tildeModsDir(), join(g.ue4ssRoot(), "Mods"),
-			g.OffDir(), g.RemovedDir(), join(g.loaderDir(), "AC8IoStoreLoader.log"), join(g.loaderDir(), "loadorder.txt"), join(g.ue4ssRoot(), "Mods", "mods.txt")} {
+			g.Storage(), g.OffDir(), g.RemovedDir(), join(g.loaderDir(), "AC8IoStoreLoader.log"), join(g.loaderDir(), "loadorder.txt"), join(g.ue4ssRoot(), "Mods", "mods.txt")} {
 			if s, err := os.Stat(p); err == nil {
 				fmt.Fprintf(&fp, "%d.", s.ModTime().UnixNano())
 			} else {
@@ -553,12 +567,7 @@ func buildState() State {
 	if s.Removed == nil {
 		s.Removed = []RemovedMod{}
 	}
-	if b, err := os.ReadFile(g.journalPath()); err == nil {
-		var j switchJournal
-		if json.Unmarshal(b, &j) == nil && !j.Finished && len(j.Steps) > 0 {
-			s.UnfinishedSw = j.To
-		}
-	}
+	s.UnfinishedSw = g.unfinishedSwitch()
 	return s
 }
 
