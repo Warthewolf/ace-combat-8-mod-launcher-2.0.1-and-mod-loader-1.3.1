@@ -66,6 +66,21 @@ func sweepUpdating(dirs ...string) {
 	}
 }
 
+// sweepUpdates runs sweepUpdating on every place an update leaves its old copy:
+// the Mod Loader's folder, ue4ss\Mods, ~mods and LogicMods, in the game and in
+// the switched-off copy. Left there, the old copy would load next to the new
+// one, or move along with a switch. Callers hold the busy lock.
+func (g Game) sweepUpdates() {
+	if g.Root == "" {
+		return
+	}
+	for _, base := range []string{g.Root, g.OffDir()} {
+		ue := join(base, "Game", "Binaries", "Win64", "ue4ss")
+		paks := join(base, "Game", "Content", "Paks")
+		sweepUpdating(join(ue, "Mods", "IoStoreLoaderMod"), join(ue, "Mods"), join(paks, "~mods"), join(paks, "LogicMods"))
+	}
+}
+
 // sweepOne deals with one old copy p left aside by an unfinished update.
 func sweepOne(p string) {
 	orig := strings.TrimSuffix(p, updatingSuffix)

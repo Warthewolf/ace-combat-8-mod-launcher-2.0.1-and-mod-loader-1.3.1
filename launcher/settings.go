@@ -31,6 +31,17 @@ func loadSettings() {
 	if b, err := os.ReadFile(settingsPath()); err == nil {
 		json.Unmarshal(b, &settings)
 	}
+	// A folder typed without its full path (possible on Linux without a folder
+	// chooser) was saved as it was typed, so it meant something else each time
+	// the launcher started from another folder, and a chosen storage folder no
+	// longer matched its game. Full paths from now on.
+	for _, p := range []*string{&settings.GameDir, &settings.StorageDir, &settings.StorageGame} {
+		if *p != "" && !filepath.IsAbs(*p) {
+			if abs, err := filepath.Abs(*p); err == nil {
+				*p = abs
+			}
+		}
+	}
 }
 
 func getSettings() Settings {
@@ -39,14 +50,24 @@ func getSettings() Settings {
 	return settings
 }
 
+// updateSettings changes the settings and saves them. The launcher only goes
+// on with the new settings once they are saved: when they can't be, it keeps
+// the old ones, so what it does always matches settings.json.
 func updateSettings(f func(*Settings)) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
-	f(&settings)
-	b, _ := json.MarshalIndent(settings, "", "  ")
+	next := settings
+	f(&next)
+	b, _ := json.MarshalIndent(next, "", "  ")
 	tmp := settingsPath() + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, settingsPath())
+	if err := os.Rename(tmp, settingsPath()); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	settings = next
+	return nil
 }

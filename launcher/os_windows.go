@@ -361,6 +361,60 @@ func registrySteamPaths() []string {
 	return out
 }
 
+var (
+	procGetLogicalDrives = kernel32.NewProc("GetLogicalDrives")
+	procGetDriveTypeW    = kernel32.NewProc("GetDriveTypeW")
+	procCreateMutexW     = kernel32.NewProc("CreateMutexW")
+	instanceMutex        uintptr
+)
+
+// driveRoots lists the drives to look for the game on (C:\ to Z:\): local
+// disks and USB drives. Network drives and CD/DVD drives are left out: one that
+// is offline, asleep or empty can take seconds to answer.
+func driveRoots() []string {
+	const driveRemovable, driveFixed, driveRAMDisk = 2, 3, 6
+	mask, _, _ := procGetLogicalDrives.Call()
+	if mask == 0 {
+		mask = ^uintptr(0) // no list: ask about every letter
+	}
+	var out []string
+	for i := 2; i < 26; i++ {
+		if mask&(1<<uint(i)) == 0 {
+			continue
+		}
+		root := string(rune('A'+i)) + `:\`
+		p, _ := syscall.UTF16PtrFromString(root)
+		switch t, _, _ := procGetDriveTypeW.Call(uintptr(unsafe.Pointer(p))); t {
+		case driveRemovable, driveFixed, driveRAMDisk:
+			out = append(out, root)
+		}
+	}
+	return out
+}
+
+// lockInstance holds a lock for as long as this launcher runs, so two
+// launchers started at the same moment can't both go on and change the same
+// files. false: another launcher holds it.
+func lockInstance() bool {
+	if instanceMutex != 0 {
+		return true
+	}
+	const errAccessDenied, errAlreadyExists = 5, 183
+	name, _ := syscall.UTF16PtrFromString(`Local\ACE8ModLauncher`)
+	h, _, err := procCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(name)))
+	if h == 0 {
+		// a launcher running as administrator has it; otherwise there is no
+		// lock to be had, and the launcher goes on as it did before
+		return !errors.Is(err, syscall.Errno(errAccessDenied))
+	}
+	if errors.Is(err, syscall.Errno(errAlreadyExists)) {
+		syscall.CloseHandle(syscall.Handle(h))
+		return false
+	}
+	instanceMutex = h
+	return true
+}
+
 func vcRuntimeInstalled() bool {
 	sys := filepath.Join(os.Getenv("SystemRoot"), "System32")
 	return isFile(filepath.Join(sys, "vcruntime140_1.dll")) && isFile(filepath.Join(sys, "msvcp140.dll"))

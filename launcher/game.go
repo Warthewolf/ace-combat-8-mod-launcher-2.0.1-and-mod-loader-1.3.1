@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -128,6 +129,11 @@ func normalizeGameDir(p string) (string, error) {
 	if p == "" {
 		return "", errNotGame
 	}
+	// a folder typed without its full path is taken from where the launcher
+	// runs now, and saved in full, so it still means the same at the next start
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
 	p = filepath.Clean(p)
 	if isFile(p) {
 		p = filepath.Dir(p)
@@ -154,19 +160,61 @@ func normalizeGameDir(p string) (string, error) {
 
 // steamDir finds Steam's own folder (the one with steam.exe and "userdata").
 func steamDir() string {
+	var found []string
 	for _, p := range steamDirCandidates() {
 		if p != "" && (isFile(join(p, "steam.exe")) || isDir(join(p, "steamapps"))) {
-			return filepath.Clean(p)
+			p = filepath.Clean(p)
+			dup := false
+			for _, f := range found {
+				dup = dup || samePath(f, p)
+			}
+			if !dup {
+				found = append(found, p)
+			}
 		}
 	}
-	return ""
+	switch {
+	case len(found) == 0:
+		return ""
+	case len(found) == 1 || platform != "linux":
+		return found[0] // Windows: the registry names the Steam that is installed
+	}
+	return pickSteamDir(found)
+}
+
+// pickSteamDir chooses between several Steam folders on Linux. Moving from the
+// normal Steam to the Flatpak (or Snap) one leaves the old folder behind, and
+// reading or changing the launch options there does nothing. The Steam whose
+// libraries have the game wins, then the one whose settings were saved last.
+func pickSteamDir(found []string) string {
+	gameDir := getSettings().GameDir
+	best, bestHas, bestTime := "", false, time.Time{}
+	for _, sd := range found {
+		has := false
+		for _, lib := range steamLibrariesOf(sd) {
+			if (gameDir != "" && isInside(gameDir, lib)) || isFile(join(lib, "steamapps", "appmanifest_"+steamAppID+".acf")) {
+				has = true
+			}
+		}
+		var newest time.Time
+		users, _ := os.ReadDir(join(sd, "userdata"))
+		for _, u := range users {
+			if st, err := os.Stat(join(sd, "userdata", u.Name(), "config", "localconfig.vdf")); err == nil && st.ModTime().After(newest) {
+				newest = st.ModTime()
+			}
+		}
+		if best == "" || (has && !bestHas) || (has == bestHas && newest.After(bestTime)) {
+			best, bestHas, bestTime = sd, has, newest
+		}
+	}
+	return best
 }
 
 func steamDirCandidates() []string {
 	var c []string
 	c = append(c, registrySteamPaths()...)
 	if v := os.Getenv("ACE8_FAKE_STEAM"); v != "" {
-		c = append([]string{v}, c...)
+		c = append(filepath.SplitList(v), c...) // tests: one or more folders
 	}
 	if runtime.GOOS == "windows" {
 		for _, env := range []string{"ProgramFiles(x86)", "ProgramFiles"} {
@@ -179,7 +227,10 @@ func steamDirCandidates() []string {
 }
 
 // steamLibraries lists every Steam library folder (each has a "steamapps" folder).
-func steamLibraries() []string {
+func steamLibraries() []string { return steamLibrariesOf(steamDir()) }
+
+// steamLibrariesOf lists the library folders of the Steam in sd.
+func steamLibrariesOf(sd string) []string {
 	var libs []string
 	seen := map[string]bool{}
 	add := func(p string) {
@@ -190,7 +241,6 @@ func steamLibraries() []string {
 			libs = append(libs, p)
 		}
 	}
-	sd := steamDir()
 	if sd != "" {
 		add(sd)
 		if b, err := os.ReadFile(join(sd, "steamapps", "libraryfolders.vdf")); err == nil {
@@ -225,15 +275,15 @@ func detectGame() string {
 			return p
 		}
 	}
-	if runtime.GOOS == "windows" {
-		for c := 'C'; c <= 'Z'; c++ {
-			d := string(c) + `:\`
-			for _, rel := range []string{`SteamLibrary\steamapps\common\ACE COMBAT 8`, `Steam\steamapps\common\ACE COMBAT 8`,
-				`Program Files (x86)\Steam\steamapps\common\ACE COMBAT 8`, `Games\SteamLibrary\steamapps\common\ACE COMBAT 8`,
-				`Games\Steam\steamapps\common\ACE COMBAT 8`} {
-				if p := d + rel; looksLikeGame(p) {
-					return p
-				}
+	// Windows: the usual places on each local drive (C: to Z:). Network and
+	// CD/DVD drives are left out: one that is offline or empty can take seconds
+	// to answer.
+	for _, d := range driveRoots() {
+		for _, rel := range []string{`SteamLibrary\steamapps\common\ACE COMBAT 8`, `Steam\steamapps\common\ACE COMBAT 8`,
+			`Program Files (x86)\Steam\steamapps\common\ACE COMBAT 8`, `Games\SteamLibrary\steamapps\common\ACE COMBAT 8`,
+			`Games\Steam\steamapps\common\ACE COMBAT 8`} {
+			if p := d + rel; looksLikeGame(p) {
+				return p
 			}
 		}
 	}
@@ -243,7 +293,20 @@ func detectGame() string {
 var (
 	detectMu     sync.Mutex
 	lastNotFound time.Time
+
+	// foundElsewhere: a copy of the game found while the chosen game folder
+	// can't be found (its drive is not connected); the player decides
+	foundMu        sync.Mutex
+	foundElsewhere string
 )
+
+// gameDirUnplugged: the game folder in the settings can't be found, and
+// neither can the folder it was in. That is a drive that is not connected
+// (or a library that is gone), not a game Steam moved or uninstalled, and
+// another copy found meanwhile must not take its place for good.
+func gameDirUnplugged(dir string) bool {
+	return dir != "" && !looksLikeGame(dir) && !isDir(filepath.Dir(dir))
+}
 
 // currentGame returns the game folder from the settings, finding it the first time.
 func currentGame() (Game, bool) {
@@ -251,23 +314,70 @@ func currentGame() (Game, bool) {
 	if s.GameDir != "" && looksLikeGame(s.GameDir) {
 		return Game{Root: s.GameDir}, true
 	}
-	// Looking through every drive takes a moment (longer with a sleeping network
-	// drive), and the window asks every two seconds: look again at most every 20 s.
-	detectMu.Lock()
+	// Looking through every drive takes a moment (longer with a sleeping
+	// drive), and the window asks every two seconds: look again at most every
+	// 20 s. Only one request looks; the others don't wait for it, so the
+	// window keeps answering and "Choose the game folder" still works.
+	if !detectMu.TryLock() {
+		return Game{}, false
+	}
 	defer detectMu.Unlock()
+	if s = getSettings(); s.GameDir != "" && looksLikeGame(s.GameDir) {
+		return Game{Root: s.GameDir}, true // chosen meanwhile
+	}
 	if time.Since(lastNotFound) < 20*time.Second {
 		return Game{}, false
 	}
-	if p := detectGame(); p != "" {
-		updateSettings(func(s *Settings) {
+	p, other := detectGame(), ""
+	if p != "" && gameDirUnplugged(s.GameDir) {
+		p, other = "", p
+	}
+	foundMu.Lock()
+	if other != "" && other != foundElsewhere {
+		logf("the game folder %s can't be found; there is another copy at %s", s.GameDir, other)
+	}
+	foundElsewhere = other
+	foundMu.Unlock()
+	if p != "" {
+		change := func(s *Settings) {
 			keepStorageAfterMove(s, s.GameDir, p)
 			s.GameDir = p
-		})
+		}
+		if err := updateSettings(change); err != nil {
+			logf("could not save the game folder: %v", err)
+			settingsMu.Lock()
+			change(&settings) // still use it now; it is looked for again at the next start
+			settingsMu.Unlock()
+		}
 		logf("found the game at %s", p)
 		return Game{Root: p}, true
 	}
 	lastNotFound = time.Now()
 	return Game{}, false
+}
+
+// gameMissing describes why the game can't be found: the chosen folder that is
+// gone ("" when none was chosen or found yet) and a copy found elsewhere.
+func gameMissing() (missing, elsewhere string) {
+	s := getSettings()
+	if s.GameDir == "" || looksLikeGame(s.GameDir) {
+		return "", ""
+	}
+	foundMu.Lock()
+	elsewhere = foundElsewhere
+	foundMu.Unlock()
+	if elsewhere != "" && !looksLikeGame(elsewhere) {
+		elsewhere = ""
+	}
+	return s.GameDir, elsewhere
+}
+
+// errNoGame: an action needs the game, and it is not known.
+func errNoGame() error {
+	if missing, _ := gameMissing(); missing != "" {
+		return fmt.Errorf("the game folder (%s) can't be found. Connect the drive it is on, or choose the game folder again in Settings", missing)
+	}
+	return errors.New("the launcher does not know where Ace Combat 8 is yet. Choose the game folder first")
 }
 
 // steamLaunchOptions returns the launch options set for the game in Steam, for

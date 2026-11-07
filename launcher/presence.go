@@ -77,7 +77,7 @@ func watchdog() {
 		}
 		if presence.shouldLeave(now, woke) {
 			logf("window closed; exiting")
-			os.Remove(instancePath())
+			removeInstanceFile()
 			os.Exit(0)
 		}
 	}

@@ -93,7 +93,11 @@ func startDetached(exe, dir string, args []string, raw string, env []string) err
 	record("started.txt", fmt.Sprintf("exe=%s dir=%s args=%q env=%q", exe, dir, all, env))
 	if f := os.Getenv("ACE8_FAKE_RUNNING"); f != "" && strings.EqualFold(filepath.Base(exe), "steam.exe") {
 		b, _ := os.ReadFile(f)
-		os.WriteFile(f, append(b, []byte("\nsteam.exe\n")...), 0o644)
+		started := "\nsteam.exe\n"
+		if os.Getenv("ACE8_FAKE_NO_WEBHELPER") == "" {
+			started += "steamwebhelper.exe\n" // Steam starts its helper once it is up
+		}
+		os.WriteFile(f, append(b, []byte(started)...), 0o644)
 	}
 	return nil
 }

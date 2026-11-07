@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -498,4 +499,38 @@ func desktopQuote(s string) string {
 		return s
 	}
 	return `"` + strings.NewReplacer(`\`, `\\\\`, `"`, `\"`, "`", "\\`", `$`, `\$`).Replace(s) + `"`
+}
+
+// ---- this computer -------------------------------------------------------------------
+
+// driveRoots: there are no drive letters to look through; the game is found
+// through Steam's libraries.
+func driveRoots() []string { return nil }
+
+var instanceLockFile *os.File
+
+// lockInstance holds a lock (instance.lock in the data folder) for as long as
+// this launcher runs, so two launchers started at the same moment can't both
+// go on and change the same files. false: another launcher holds it.
+func lockInstance() bool {
+	if instanceLockFile != nil {
+		return true
+	}
+	f, ok := tryLockFile(filepath.Join(dataDir, "instance.lock"))
+	instanceLockFile = f
+	return ok
+}
+
+// tryLockFile locks p. With no lock to be had (a file system without locks),
+// it says go on, as the launcher did before it had one.
+func tryLockFile(p string) (*os.File, bool) {
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, true
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, !errors.Is(err, syscall.EWOULDBLOCK)
+	}
+	return f, true
 }

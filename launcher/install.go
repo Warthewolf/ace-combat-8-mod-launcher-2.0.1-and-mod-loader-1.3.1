@@ -77,7 +77,7 @@ var (
 )
 
 // errNoBundle: nothing to install from.
-var errNoBundle = errors.New("UE4SS and the Mod Loader aren't in the game yet. Copy the Game folder from the Mod Loader download into the ACE COMBAT 8 folder (let it merge the folders), or unzip the Mod Loader download next to the launcher's folder and press Install again")
+var errNoBundle = errors.New("UE4SS and the Mod Loader aren't in the game yet. Copy the Game folder from the Mod Loader download into the ACE COMBAT 8 folder (let it merge the folders), or unzip the Mod Loader download next to the launcher's folder, then press Install on the Play page")
 
 var (
 	reLoaderVersion = regexp.MustCompile(`(\d+\.\d+\.\d+)-ac8-`)
@@ -295,9 +295,12 @@ type AddChoice struct {
 }
 
 type AddResult struct {
-	Added      []string    `json:"added"`
-	Updated    []string    `json:"updated"`
-	Notes      []string    `json:"notes"`
+	Added   []string `json:"added"`
+	Updated []string `json:"updated"`
+	Notes   []string `json:"notes"`
+	// Warnings: problems that stop an added mod from loading, each saying what
+	// to do about it
+	Warnings   []string    `json:"warnings,omitempty"`
 	Choices    []AddChoice `json:"choices,omitempty"` // several versions of a mod: the player picks
 	SkinStudio bool        `json:"skinStudio"`
 }
@@ -1008,7 +1011,7 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 				return res, errors.New("the download has another archive inside (" + path.Base(f.rel) + "), and no mod next to it. Unpack that archive, then add what comes out of it")
 			}
 		}
-		return res, errors.New("no mod was found in it. A mod has a .utoc and a .ucas file, or a file ending in _P.pak (pak mods), or a Scripts\\main.lua (UE4SS script mod)")
+		return res, errors.New("no mod was found in " + source + ". Check that it is the mod's main download, not a preview or a readme. (A mod has .utoc and .ucas files, a file ending in _P.pak, or a Scripts\\main.lua file.)")
 	}
 	units, choices := pickVersions(units, pick, source)
 	if len(choices) > 0 {
@@ -1020,7 +1023,7 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 		for _, u := range units {
 			for _, n := range u.utocs {
 				if isPakName(n) {
-					res.Notes = append(res.Notes, u.name+" is a .pak mod, which needs Mod Loader 1.3.1 or newer. Update it in Settings > Modding setup.")
+					res.Warnings = append(res.Warnings, u.name+" won't load yet: it is a .pak mod, and your Mod Loader is too old for those. Update the Mod Loader to 1.3.1 or newer in Settings > Modding setup.")
 					break
 				}
 			}
@@ -1030,7 +1033,8 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 	os.RemoveAll(stage) // left over from a launcher that was closed while adding
 	sweepUpdating(at.loader, join(at.ue, "Mods"), at.tilde, at.logic)
 	defer os.RemoveAll(stage)
-	needsBPModLoader := false
+	var needsBPModLoader []string // the LogicMods mods added
+
 	dated := map[string]bool{} // script mods: date key -> updated
 	var datedPaks []struct {   // pak mods: where they went
 		path    string
@@ -1091,7 +1095,7 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 					continue // a .pak on its own needs nothing else
 				}
 				if !isFile(join(u.target, stem+".ucas")) && !hasFileFold(u.files, stem+".ucas") {
-					res.Notes = append(res.Notes, n+" has no .ucas file next to it in the download, so it will not load. Ask the mod's author for the full files.")
+					res.Warnings = append(res.Warnings, "Part of "+u.name+" is missing from the download ("+stem+".ucas), so it won't load. Download it again, or ask its author for the full files.")
 				}
 			}
 		}
@@ -1229,7 +1233,7 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 			}
 		}
 		if strings.HasPrefix(u.kind, "logic") {
-			needsBPModLoader = true
+			needsBPModLoader = append(needsBPModLoader, u.name)
 		}
 		switch {
 		case u.kind == "script":
@@ -1257,8 +1261,8 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 			res.Added = append(res.Added, label)
 		}
 	}
-	if needsBPModLoader && !isDir(join(at.ue, "Mods", "BPModLoaderMod")) {
-		res.Notes = append(res.Notes, "LogicMods need UE4SS's BPModLoaderMod, which is not installed, so this mod won't load until it is. It comes with the full UE4SS download (ue4ss\\Mods\\BPModLoaderMod).")
+	if len(needsBPModLoader) > 0 && !isDir(join(at.ue, "Mods", "BPModLoaderMod")) {
+		res.Warnings = append(res.Warnings, strings.Join(needsBPModLoader, ", ")+" won't load yet: LogicMods mods need UE4SS's BPModLoaderMod, which isn't installed. Add it from the full UE4SS download (its ue4ss\\Mods\\BPModLoaderMod folder).")
 	}
 	carried := keepReplacedPlaces(at, installed, replaced)
 	g.tidyLoadOrder()
@@ -1273,7 +1277,7 @@ func (g Game) addMods(source string, files []incoming, pick []string) (AddResult
 		}
 	}
 	recordModDates(dated, carried)
-	logf("added from %s: added %v, updated %v, notes %v", source, res.Added, res.Updated, res.Notes)
+	logf("added from %s: added %v, updated %v, notes %v, warnings %v", source, res.Added, res.Updated, res.Notes, res.Warnings)
 	return res, nil
 }
 
@@ -1322,7 +1326,29 @@ func pickVersions(units []*unit, pick []string, source string) ([]*unit, []AddCh
 		}
 		return units, ch
 	}
-	return keep(func(u *unit) bool { return !choosable(u) || want[u.id] }), nil
+	kept := keep(func(u *unit) bool { return !choosable(u) || want[u.id] })
+	for _, u := range kept {
+		if choosable(u) && want[u.id] {
+			nameAfterDownload(u, source)
+		}
+	}
+	return kept, nil
+}
+
+// nameAfterDownload names a version picked from a download after the download
+// too ("Su-57 Liveries - Red", not just "Red"), so it can be told apart from
+// other mods' versions. The same version from the same download (or a newer
+// one) gets the same name again, so adding it again updates it.
+func nameAfterDownload(u *unit, source string) {
+	base := baseModName(source)
+	if base == "" || strings.Contains(strings.ToLower(u.name), strings.ToLower(base)) {
+		return
+	}
+	name := safeName(base + " - " + u.name)
+	if isSkippedDir(name) {
+		return
+	}
+	u.name, u.target = name, join(filepath.Dir(u.target), name)
 }
 
 // choosable: a mod folder that can be one of several versions in a download.

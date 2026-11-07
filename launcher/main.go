@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,42 @@ type instanceInfo struct {
 
 func instancePath() string { return filepath.Join(dataDir, "instance.json") }
 
+// prepareDataDir makes the data folder. It holds the window's access token
+// (instance.json), so on Linux, where other people's accounts on the same
+// computer could otherwise read it, only this account may look inside.
+func prepareDataDir() {
+	os.MkdirAll(dataDir, 0o700)
+	if runtime.GOOS != "windows" && dataDir != "." {
+		os.Chmod(dataDir, 0o700)
+	}
+}
+
+// writeInstanceFile tells a second start of the program where this one is.
+// The file is replaced in one go, so a second start never reads half of it.
+func writeInstanceFile(port int) {
+	in, _ := json.Marshal(instanceInfo{Port: port, Token: token, PID: os.Getpid()})
+	p := instancePath()
+	if os.WriteFile(p+".tmp", in, 0o600) == nil && os.Chmod(p+".tmp", 0o600) == nil && os.Rename(p+".tmp", p) == nil {
+		return
+	}
+	os.Remove(p + ".tmp")
+	os.WriteFile(p, in, 0o600)
+	os.Chmod(p, 0o600)
+}
+
+// removeInstanceFile removes instance.json when this launcher leaves, unless
+// it is no longer this one's: a launcher that took over has written its own.
+func removeInstanceFile() {
+	b, err := os.ReadFile(instancePath())
+	if err != nil {
+		return
+	}
+	var in instanceInfo
+	if json.Unmarshal(b, &in) == nil && in.PID == os.Getpid() && in.Token == token {
+		os.Remove(instancePath())
+	}
+}
+
 type runningInstance struct {
 	URL     string // its window, "" when no launcher is running
 	Version string // "" for launchers before 2.0.1
@@ -143,7 +180,20 @@ func (ri runningInstance) replace() bool {
 	c := http.Client{Timeout: 1500 * time.Millisecond}
 	req, _ := http.NewRequest("POST", base+"api/quit", nil)
 	req.Header.Set("X-Token", ri.info.Token)
+	agreed := false
 	if resp, err := c.Do(req); err == nil {
+		var reply struct {
+			OK    bool
+			Error string
+		}
+		if resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&reply) == nil {
+			if !reply.OK {
+				resp.Body.Close()
+				logf("the running launcher can't close yet (%s)", reply.Error)
+				return false // it is switching or adding mods: let it finish
+			}
+			agreed = true
+		}
 		resp.Body.Close()
 	}
 	for i := 0; i < 20; i++ {
@@ -152,7 +202,12 @@ func (ri runningInstance) replace() bool {
 			return true
 		}
 	}
-	// launchers before 2.0.1 have no way to be asked: stop the process
+	// Launchers before 2.0.1 have no way to be asked, and one that agreed to
+	// close keeps everything else waiting until it has: stop the process. Any
+	// other launcher is left alone, so nothing is stopped half way.
+	if !agreed && ri.Version != "" {
+		return false
+	}
 	if p, err := os.FindProcess(ri.info.PID); err == nil && ri.info.PID > 0 && ri.info.PID != os.Getpid() {
 		p.Kill()
 	}
@@ -163,6 +218,51 @@ func (ri runningInstance) replace() bool {
 		}
 	}
 	return false
+}
+
+// singleInstance makes sure one launcher runs at a time. It returns whether
+// this start goes on, and whether it holds the lock that keeps other starts
+// waiting. A launcher of the same build already running shows its window; one
+// of another build is asked to make way.
+func singleInstance() (goOn, locked bool) {
+	deadline := time.Now().Add(8 * time.Second)
+	for replaced := 0; ; {
+		locked = lockInstance()
+		if ri := findRunningInstance(); ri.URL != "" {
+			if ri.Build == buildID || replaced >= 3 || !ri.replace() {
+				logf("already running (version %q); showing its window", ri.Version)
+				openURL(ri.URL, true)
+				return false, false
+			}
+			replaced++
+			logf("closed the running launcher (version %q) to start %s", ri.Version, appVersion)
+			continue // its lock is free once it has gone
+		}
+		if locked {
+			return true, true
+		}
+		if time.Now().After(deadline) {
+			logf("another launcher holds the lock but does not answer; starting anyway")
+			return true, false
+		}
+		time.Sleep(150 * time.Millisecond) // another start got here first: wait for its window
+	}
+}
+
+// tidyAtStart finishes what an update cut short left behind (an old copy
+// "<name>.ace8-updating" next to the mod), once the game is known. The window
+// finds the game; this only waits for it.
+func tidyAtStart() {
+	for i := 0; i < 120; i++ {
+		if s := getSettings(); s.GameDir != "" && looksLikeGame(s.GameDir) {
+			if !gameRunning() && busy.Try("tidying up") {
+				Game{Root: s.GameDir}.sweepUpdates()
+				busy.Done()
+			}
+			return
+		}
+		time.Sleep(time.Second)
+	}
 }
 
 // buildID tells two builds of the launcher apart, even with the same version number.
@@ -191,7 +291,7 @@ func main() {
 	if dataDir == "" {
 		dataDir = defaultDataDir()
 	}
-	os.MkdirAll(dataDir, 0o755)
+	prepareDataDir()
 	openLog()
 
 	exeDir = *flagExeDir
@@ -202,13 +302,13 @@ func main() {
 	}
 
 	if *flagToken == "" {
-		if ri := findRunningInstance(); ri.URL != "" {
-			if ri.Build == buildID || !ri.replace() {
-				logf("already running (version %q); showing its window", ri.Version)
-				openURL(ri.URL, true)
-				return
-			}
-			logf("closed the running launcher (version %q) to start %s", ri.Version, appVersion)
+		goOn, locked := singleInstance()
+		if !goOn {
+			return
+		}
+		if locked {
+			// dropped files that were never added belong to a launcher that has closed
+			os.RemoveAll(uploadsDir())
 		}
 	}
 
@@ -227,12 +327,12 @@ func main() {
 	port := ln.Addr().(*net.TCPAddr).Port
 	baseURL = fmt.Sprintf("http://127.0.0.1:%d/", port)
 
-	in, _ := json.Marshal(instanceInfo{Port: port, Token: token, PID: os.Getpid()})
-	os.WriteFile(instancePath(), in, 0o644)
+	writeInstanceFile(port)
 
 	logf("%s %s started on %s, data=%s, program folder=%s", appName, appVersion, platform, dataDir, exeDir)
 	platformStart()
 	presence.heard("")
+	go tidyAtStart()
 	if !*flagNoOpen {
 		if err := openURL(baseURL+"?t="+token, true); err != nil {
 			logf("could not open the window: %v", err)

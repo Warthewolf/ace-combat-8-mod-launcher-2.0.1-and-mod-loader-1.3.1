@@ -10,12 +10,15 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 //go:embed ui
@@ -29,14 +32,36 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
-	msg := err.Error()
-	if msg != "" {
-		msg = strings.ToUpper(msg[:1]) + msg[1:]
-		if !strings.HasSuffix(msg, ".") && !strings.HasSuffix(msg, ")") {
-			msg += "."
-		}
+	writeJSON(w, 200, map[string]any{"ok": false, "error": sentence(err.Error())})
+}
+
+// sentence starts a message with a capital letter and ends it with a full stop.
+// The first letter is a whole letter, so a mod name such as "機体スキン" or
+// "émile" at the start stays readable.
+func sentence(msg string) string {
+	if msg == "" {
+		return msg
 	}
-	writeJSON(w, 200, map[string]any{"ok": false, "error": msg})
+	if r, n := utf8.DecodeRuneInString(msg); r != utf8.RuneError {
+		msg = string(unicode.ToUpper(r)) + msg[n:]
+	}
+	if !strings.HasSuffix(msg, ".") && !strings.HasSuffix(msg, ")") {
+		msg += "."
+	}
+	return msg
+}
+
+// uiTypes are the types of the window's own files. Windows lets other
+// programs change what a file ending means (in the registry); a .css taken
+// for plain text would leave the window without its layout.
+var uiTypes = map[string]string{
+	".html": "text/html; charset=utf-8",
+	".css":  "text/css; charset=utf-8",
+	".js":   "text/javascript; charset=utf-8",
+	".png":  "image/png",
+	".svg":  "image/svg+xml",
+	".woff": "font/woff",
+	".txt":  "text/plain; charset=utf-8",
 }
 
 func clientID(r *http.Request) string {
@@ -61,11 +86,12 @@ func newMux(port int) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		if strings.EqualFold(filepath.Ext(name), ".woff") {
-			w.Header().Set("Content-Type", "font/woff")
-		} else if ct := mime.TypeByExtension(filepath.Ext(name)); ct != "" {
+		if ct, ok := uiTypes[strings.ToLower(path.Ext(name))]; ok {
+			w.Header().Set("Content-Type", ct)
+		} else if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
 			w.Header().Set("Content-Type", ct)
 		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write(b)
 	})
@@ -88,7 +114,7 @@ func newMux(port int) http.Handler {
 			defer func() {
 				if p := recover(); p != nil {
 					logf("panic in %s: %v", path, p)
-					writeErr(w, fmt.Errorf("something went wrong inside the launcher (%v). Copy a support report from Settings and send it to @voidcallsreaper", p))
+					writeErr(w, fmt.Errorf("something went wrong inside the launcher (%v). Press Copy support report in Settings and send it to @voidcallsreaper on Discord", p))
 				}
 			}()
 			h(w, r)
@@ -104,7 +130,8 @@ func newMux(port int) http.Handler {
 			http.Error(w, "POST only", 405)
 			return
 		}
-		if busy.Running() {
+		// held until the program has ended, so no switch or add starts meanwhile
+		if !busy.Try("closing") {
 			writeJSON(w, 200, map[string]any{"ok": false, "error": "busy: " + busy.What()})
 			return
 		}
@@ -131,10 +158,15 @@ func newMux(port int) http.Handler {
 				http.Error(w, "POST only", 405)
 				return
 			}
-			g, ok := currentGame()
-			if !ok && path != "game" && path != "settings" && path != "pick-game" {
-				writeErr(w, errors.New("the launcher does not know where Ace Combat 8 is yet. Choose the game folder first"))
-				return
+			// choosing the game folder doesn't need the game: it must not wait
+			// while the launcher is still looking for it
+			var g Game
+			ok := false
+			if path != "game" && path != "pick-game" {
+				if g, ok = currentGame(); !ok {
+					writeErr(w, errNoGame())
+					return
+				}
 			}
 			if ok && needsStorage[path] && g.storageMissing() {
 				writeErr(w, fmt.Errorf("the mod storage folder (%s) can't be found. Connect the drive it is on, or choose it again in Settings", g.Storage()))
@@ -160,11 +192,17 @@ func newMux(port int) http.Handler {
 	act("switch", "switching", func(g Game, r *http.Request) (any, error) {
 		var req struct{ To string }
 		json.NewDecoder(r.Body).Decode(&req)
+		if !gameRunning() {
+			g.sweepUpdates() // an old copy left by an update cut short must not move along
+		}
 		return g.switchTo(req.To)
 	})
 	act("play", "starting the game", func(g Game, r *http.Request) (any, error) {
 		var req struct{ Force bool }
 		json.NewDecoder(r.Body).Decode(&req)
+		if !gameRunning() {
+			g.sweepUpdates() // an old copy left by an update cut short would load as well
+		}
 		return g.playWith(req.Force)
 	})
 	act("steam-launch-options", "changing Steam's launch options", func(_ Game, r *http.Request) (any, error) {
@@ -310,17 +348,28 @@ func newMux(port int) http.Handler {
 		}
 		return g.moveStorage(g.storageTarget(p))
 	})
-	act("settings", "saving settings", func(_ Game, r *http.Request) (any, error) {
+	// Extra launch options and "welcome shown" change no mod files, so they are
+	// saved even while a switch or an add is running.
+	api("settings", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
+		}
 		var req map[string]any
 		json.NewDecoder(r.Body).Decode(&req)
-		return nil, updateSettings(func(s *Settings) {
+		if err := updateSettings(func(s *Settings) {
 			if v, ok := req["extraArgs"].(string); ok {
 				s.ExtraArgs = strings.TrimSpace(v)
 			}
 			if v, ok := req["welcomeDone"].(bool); ok {
 				s.WelcomeDone = v
 			}
-		})
+		}); err != nil {
+			logf("settings failed: %v", err)
+			writeErr(w, fmt.Errorf("the launcher could not save its settings (%v)", err))
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "result": nil, "state": buildState()})
 	})
 
 	api("reveal", func(w http.ResponseWriter, r *http.Request) {
@@ -444,6 +493,11 @@ type GameState struct {
 	LoaderDir         string `json:"loaderDir"`
 	TildeDir          string `json:"tildeDir"`
 	SteamDir          string `json:"steamDir"`
+	// not found: the game folder chosen before, which can't be found now (a
+	// drive not connected), and another copy found meanwhile, which the
+	// player can choose instead (the "game" call with its path)
+	Missing   string `json:"missing,omitempty"`
+	Elsewhere string `json:"elsewhere,omitempty"`
 }
 
 type State struct {
@@ -500,6 +554,9 @@ func buildStatus() Status {
 		}
 	}
 	fp.WriteString(getSettings().GameDir)
+	// the Mod Loader download put next to the launcher (or taken away), so the
+	// window offers Install without a restart
+	fp.WriteString("|" + bundleStamp())
 	if platform == "linux" {
 		if t := steamStartLogTime(); !t.IsZero() {
 			fmt.Fprintf(&fp, ".%d", t.UnixNano())
@@ -528,6 +585,7 @@ func buildState() State {
 	}
 	g, ok := currentGame()
 	if !ok {
+		s.Game.Missing, s.Game.Elsewhere = gameMissing()
 		s.Mode = ModeInfo{Mode: modeNone}
 		s.PakMods, s.ScriptMods, s.Removed = []*PakMod{}, []*ScriptMod{}, []RemovedMod{}
 		return s
@@ -575,42 +633,186 @@ func buildState() State {
 
 func uploadsDir() string { return join(dataDir, "uploads") }
 
-func receiveUpload(r *http.Request) (any, error) {
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
+// maxUpload: a drop bigger than this is not a mod (the game's own folder is
+// tens of GB). Add mod… and Add folder… read a very big mod where it is.
+var maxUpload int64 = 16 << 30
+
+var errUploadTooBig = errors.New("upload too big")
+
+func uploadTooBig(n int64) error {
+	size := "more than " + gb(maxUpload)
+	if n > 0 {
+		size = gb(n)
+	}
+	return fmt.Errorf("what you dropped is %s, which is far too big for a mod. Drop only the mod you downloaded, not the game's folder. For a very big mod, use Add mod… or Add folder… instead", size)
+}
+
+func gb(n int64) string { return fmt.Sprintf("%.1f GB", float64(n)/(1<<30)) }
+
+// capReader stops a drop that turns out bigger than max.
+type capReader struct {
+	r      io.Reader
+	n, max int64
+}
+
+func (c *capReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if c.n += int64(n); c.n > c.max {
+		return n, errUploadTooBig
+	}
+	return n, err
+}
+
+// errGameFiles: the game's own files are not a mod. Added, they would be
+// loaded a second time and break the game (and take tens of GB).
+func errGameFiles(what, file string) error {
+	return fmt.Errorf("%s holds the game's own files (such as %s), not a mod. Add only the mod you downloaded", what, file)
+}
+
+// uploadSegments cleans the path of a dropped file. Names Windows can't store
+// (with : * ? " < > |, possible on Linux) get "_" in their place, so the files
+// of one mod stay together. Junk from other systems (.DS_Store, Thumbs.db) is
+// left out (false).
+func uploadSegments(rel string) ([]string, bool) {
+	parts := strings.Split(strings.ReplaceAll(rel, `\`, "/"), "/")
+	for i, s := range parts {
+		if s == "." || s == ".." || s == "" {
+			continue // cleanSegments refuses ".."
+		}
+		s = strings.Map(func(r rune) rune {
+			if r < 32 || strings.ContainsRune(`:*?"<>|`, r) {
+				return '_'
+			}
+			return r
+		}, s)
+		if t := strings.TrimRight(s, ". "); t != "" && !windowsSafeName(t) {
+			s = "_" + s // CON, NUL.txt …
+		}
+		parts[i] = s
+	}
+	return cleanSegments(strings.Join(parts, "/"))
+}
+
+// receiveUpload saves files dropped onto the window into uploads\<id>, as they
+// arrive: nothing is kept in memory or in a temporary copy first, so a drop
+// needs its own size on the disk once, and any number of files is fine. What
+// was saved of a drop that fails is deleted again.
+func receiveUpload(r *http.Request) (_ any, err error) {
+	if r.ContentLength > maxUpload {
+		return nil, uploadTooBig(r.ContentLength)
+	}
+	body := &capReader{r: r.Body, max: maxUpload}
+	r.Body = io.NopCloser(body)
+	mr, err := r.MultipartReader()
+	if err != nil {
 		return nil, errors.New("the files could not be received: " + err.Error())
 	}
 	id := newToken()[:12]
 	dir := join(uploadsDir(), id)
-	paths := r.MultipartForm.Value["path"]
-	files := r.MultipartForm.File["file"]
-	for i, fh := range files {
-		rel := fh.Filename
-		if i < len(paths) && paths[i] != "" {
-			rel = paths[i]
-		}
-		segs, ok := cleanSegments(rel)
-		if !ok {
-			continue
-		}
-		dst := join(dir, filepath.Join(segs...))
-		f, err := fh.Open()
+	defer func() {
 		if err != nil {
-			return nil, err
+			os.RemoveAll(dir)
+			if body.n > body.max {
+				err = uploadTooBig(r.ContentLength)
+			}
 		}
-		os.MkdirAll(filepath.Dir(dst), 0o755)
-		out, err := os.Create(dst)
+	}()
+	var paths []string // the window sends each file's path before the file
+	files, kept := 0, 0
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
 		if err != nil {
-			f.Close()
-			return nil, err
+			return nil, errors.New("the files could not be received: " + err.Error())
 		}
-		_, err = io.Copy(out, f)
-		out.Close()
-		f.Close()
-		if err != nil {
-			return nil, errors.New("could not save " + fh.Filename + ": " + err.Error())
+		switch part.FormName() {
+		case "path":
+			b, _ := io.ReadAll(io.LimitReader(part, 4096))
+			paths = append(paths, string(b))
+		case "file":
+			rel := part.FileName()
+			if files < len(paths) && paths[files] != "" {
+				rel = paths[files]
+			}
+			files++
+			segs, ok := uploadSegments(rel)
+			if !ok {
+				break
+			}
+			if b := strings.ToLower(segs[len(segs)-1]); b == "global.utoc" || b == "global.ucas" {
+				what := "What you dropped"
+				if len(segs) > 1 {
+					what = segs[0]
+				}
+				part.Close()
+				return nil, errGameFiles(what, segs[len(segs)-1]) // stop before tens of GB arrive
+			}
+			dst := join(dir, filepath.Join(segs...))
+			err := os.MkdirAll(filepath.Dir(dst), 0o755)
+			var out *os.File
+			if err == nil {
+				out, err = os.Create(dst)
+			}
+			if err == nil {
+				_, err = io.Copy(out, part)
+				if cerr := out.Close(); err == nil {
+					err = cerr
+				}
+			}
+			if err != nil {
+				part.Close()
+				return nil, fmt.Errorf("could not save %s: %v", strings.Join(segs, "/"), err)
+			}
+			kept++
 		}
+		part.Close()
+	}
+	if kept == 0 {
+		return nil, errors.New("nothing in what you dropped can be used. Drop the mod's folder or its .zip file")
 	}
 	return id, nil
+}
+
+// bundleStamp changes when a Mod Loader download appears next to the
+// launcher, goes, or is replaced by another version. bundleDir keeps its
+// answer for a few seconds, so this is cheap.
+func bundleStamp() string {
+	bd := bundleDir()
+	if bd == "" {
+		return ""
+	}
+	if st, err := os.Stat(join(bd, "Game", "Binaries", "Win64", "ue4ss", "Mods", "IoStoreLoaderMod", "dlls", "main.dll")); err == nil {
+		return fmt.Sprintf("%s.%d.%d", bd, st.Size(), st.ModTime().UnixNano())
+	}
+	return bd
+}
+
+// gameOwnFile names a file of the game itself among files, "" when there is
+// none: global.utoc or global.ucas, which only the game has, or a container
+// with the name and size of one in the game's Paks folder (pakchunk0-Windows.ucas …).
+// Some mods are called pakchunkNN-Windows too, so the name alone is not enough.
+func gameOwnFile(g Game, files []incoming) string {
+	sizes := map[string]int64{}
+	if ents, err := os.ReadDir(g.Paks()); err == nil {
+		for _, e := range ents {
+			if info, err := e.Info(); err == nil && !e.IsDir() && isContainerFile(e.Name()) {
+				sizes[strings.ToLower(e.Name())] = info.Size()
+			}
+		}
+	}
+	for _, f := range files {
+		base := path.Base(strings.ReplaceAll(f.rel, `\`, "/"))
+		low := strings.ToLower(base)
+		if low == "global.utoc" || low == "global.ucas" {
+			return base
+		}
+		if size, ok := sizes[low]; ok && size == f.size {
+			return base
+		}
+	}
+	return ""
 }
 
 func cleanOldUploads() {
@@ -665,8 +867,16 @@ func addFromPaths(g Game, paths []string, pick []string) (AddResult, error) {
 		all.Added = append(all.Added, r.Added...)
 		all.Updated = append(all.Updated, r.Updated...)
 		all.Notes = append(all.Notes, r.Notes...)
+		all.Warnings = append(all.Warnings, r.Warnings...)
 		all.Choices = append(all.Choices, r.Choices...)
 		all.SkinStudio = all.SkinStudio || r.SkinStudio
+	}
+	// the game's own Paks (or whole) folder is not a mod
+	add := func(source, what string, files []incoming) (AddResult, error) {
+		if f := gameOwnFile(g, files); f != "" {
+			return AddResult{}, errGameFiles(what, f)
+		}
+		return g.addMods(source, files, pick)
 	}
 	var loose []incoming
 	looseName, pakName := "", ""
@@ -683,7 +893,7 @@ func addFromPaths(g Game, paths []string, pick []string) (AddResult, error) {
 			if err != nil {
 				return all, err
 			}
-			r, err := g.addMods(filepath.Base(p), files, pick)
+			r, err := add(filepath.Base(p), filepath.Base(p), files)
 			if err != nil {
 				return all, err
 			}
@@ -693,7 +903,7 @@ func addFromPaths(g Game, paths []string, pick []string) (AddResult, error) {
 			if err != nil {
 				return all, err
 			}
-			r, err := g.addMods(strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)), files, pick)
+			r, err := add(strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)), filepath.Base(p), files)
 			closer()
 			if err != nil {
 				return all, err
@@ -738,7 +948,7 @@ func addFromPaths(g Game, paths []string, pick []string) (AddResult, error) {
 				}
 			}
 		}
-		r, err := g.addMods(looseName, loose, pick)
+		r, err := add(looseName, "What you chose", loose)
 		if err != nil {
 			return all, err
 		}

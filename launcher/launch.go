@@ -27,6 +27,16 @@ var directEnv = []string{"SteamAppId=" + steamAppID, "SteamGameId=" + steamAppID
 // how long Play waits for Steam to finish signing in
 var steamSignInWait = 90 * time.Second
 
+// how long Play waits, after starting Steam, for Steam's own helper
+// (steamwebhelper.exe) when the signed-in account noted in the registry may be
+// left over from a Steam that didn't close normally
+var steamHelperWait = 30 * time.Second
+
+// how long the launcher watches for the game to appear after Play: Steam
+// signing in or updating, a game update, or the Steam Deck's shader
+// pre-caching can take minutes
+var launchWatchFor = 15 * time.Minute
+
 var gameExeNames = []string{"AceCombat8.exe", "start_protected_game.exe"}
 
 func gameRunning() bool { return processRunning(gameExeNames...) }
@@ -43,6 +53,9 @@ type LaunchInfo struct {
 	How       string    `json:"how"`
 	SawGame   bool      `json:"sawGame"`
 	GameEnded bool      `json:"gameEnded"`
+	// Waiting: the launcher is still watching for the game to appear. Once
+	// false with SawGame false, the game didn't start.
+	Waiting   bool      `json:"waiting"`
 	Note      string    `json:"note,omitempty"` // something the player should know about this start
 	LogBefore time.Time `json:"-"`
 }
@@ -66,7 +79,7 @@ func (g Game) playWith(force bool) (*LaunchInfo, error) {
 	if mi.Mode == modeMixed {
 		return nil, errors.New("the switch is half done. Press Modded or Unmodded first so everything is in one place")
 	}
-	li := &LaunchInfo{Started: time.Now(), Mode: mi.Mode}
+	li := &LaunchInfo{Started: time.Now(), Mode: mi.Mode, Waiting: true}
 	if st, err := os.Stat(join(g.loaderDir(), "AC8IoStoreLoader.log")); err == nil {
 		li.LogBefore = st.ModTime()
 	}
@@ -121,6 +134,10 @@ func (g Game) playLinux(li *LaunchInfo, mode string, force bool) error {
 // not cover the game.
 func ensureSteam() error {
 	if !steamRunning() {
+		// Steam clears the signed-in account when it closes normally. After a
+		// crash, a forced stop or a power cut the old one is still noted, so it
+		// doesn't show that the new Steam has signed in.
+		before, _ := steamActiveUser()
 		logf("starting Steam first")
 		if exe := join(steamDir(), "steam.exe"); steamDir() != "" && isFile(exe) {
 			if err := startDetached(exe, steamDir(), []string{"-silent"}, "", nil); err != nil {
@@ -136,6 +153,16 @@ func ensureSteam() error {
 			return errors.New("Steam did not start. Start Steam yourself, then press Play again")
 		}
 		time.Sleep(3 * time.Second)
+		if before != 0 {
+			// Steam starts its helper once it has updated itself and is up;
+			// without it the game can start before Steam is ready
+			for deadline := time.Now().Add(steamHelperWait); !processRunning("steamwebhelper.exe") && time.Now().Before(deadline); {
+				time.Sleep(500 * time.Millisecond)
+			}
+			if !processRunning("steamwebhelper.exe") {
+				logf("Steam's helper did not start; starting the game anyway")
+			}
+		}
 	}
 	// Steam notes the signed-in account in the registry; wait for it (signing in
 	// and updates can take a while after Steam starts).
@@ -233,17 +260,26 @@ func splitArgs(s string) []string {
 
 // watchLaunch notes when the game shows up and when it ends.
 func watchLaunch(li *LaunchInfo) {
-	for i := 0; i < 90*2; i++ { // up to 90 s for the game to appear
-		time.Sleep(500 * time.Millisecond)
+	start, limit := time.Now(), launchWatchFor
+	for {
+		wait := 500 * time.Millisecond
+		if time.Since(start) > 90*time.Second {
+			wait = 2 * time.Second // a slow start: look less often
+		}
+		time.Sleep(wait)
 		if gameRunning() {
 			launchMu.Lock()
-			li.SawGame = true
+			li.SawGame, li.Waiting = true, false
 			launchMu.Unlock()
 			break
 		}
-	}
-	if !li.SawGame {
-		return
+		if time.Since(start) > limit {
+			launchMu.Lock()
+			li.Waiting = false
+			launchMu.Unlock()
+			logf("the game did not appear within %v of Play", limit)
+			return
+		}
 	}
 	for {
 		time.Sleep(2 * time.Second)

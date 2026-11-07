@@ -498,10 +498,11 @@ func TestAddZipWithVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(res.Added, []string{"Red"}) {
+	// a picked version is named after the download too
+	if !reflect.DeepEqual(res.Added, []string{"Su-57 Liveries - Red"}) {
 		t.Fatalf("%+v", res)
 	}
-	b, _ := os.ReadFile(join(g.loaderDir(), "Red", "Su57Livery_P.ucas"))
+	b, _ := os.ReadFile(join(g.loaderDir(), "Su-57 Liveries - Red", "Su57Livery_P.ucas"))
 	if string(b) != "red" {
 		t.Fatal("wrong files")
 	}
@@ -510,10 +511,10 @@ func TestAddZipWithVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exists(join(g.loaderDir(), "Red")) || !exists(join(g.loaderDir(), "Blue")) {
+	if exists(join(g.loaderDir(), "Su-57 Liveries - Red")) || !exists(join(g.loaderDir(), "Su-57 Liveries - Blue")) {
 		t.Fatal("Red should have been replaced")
 	}
-	if len(g.listRemoved()) != 0 || !strings.Contains(strings.Join(res.Notes, " "), "The older copy in Red was replaced") {
+	if len(g.listRemoved()) != 0 || !strings.Contains(strings.Join(res.Notes, " "), "The older copy in Su-57 Liveries - Red was replaced") {
 		t.Fatalf("removed %+v notes %v", g.listRemoved(), res.Notes)
 	}
 }
@@ -1423,7 +1424,7 @@ func TestAddPakMods(t *testing.T) {
 	z2 := join(t.TempDir(), "UI.zip")
 	makeZip(t, z2, map[string]string{"UI_P.pak": "p", "UI_P.utoc": "t"})
 	res, err = addFromPaths(g, []string{z2}, nil)
-	if err != nil || len(res.Notes) != 1 || !strings.Contains(res.Notes[0], "UI_P.pak has no .ucas") {
+	if err != nil || len(res.Notes) != 0 || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "Part of UI is missing from the download (UI_P.ucas)") {
 		t.Fatalf("%+v %v", res, err)
 	}
 	// a .pak that does not end in _P.pak is explained
@@ -1437,7 +1438,7 @@ func TestAddPakMods(t *testing.T) {
 	z4 := join(t.TempDir(), "Other.zip")
 	makeZip(t, z4, map[string]string{"Other/Other_P.pak": "p"})
 	res, err = addFromPaths(g, []string{z4}, nil)
-	if err != nil || len(res.Notes) != 1 || !strings.Contains(res.Notes[0], "needs Mod Loader 1.3.1") {
+	if err != nil || len(res.Notes) != 0 || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "Update the Mod Loader to 1.3.1") {
 		t.Fatalf("%+v %v", res, err)
 	}
 }
