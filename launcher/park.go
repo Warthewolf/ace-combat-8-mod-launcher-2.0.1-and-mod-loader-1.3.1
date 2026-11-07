@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -205,11 +206,12 @@ const (
 // moveAcrossDrives moves src to another drive (a storage folder on another
 // drive, or a game folder that is a link to another drive). It is all or
 // nothing. The copy is made under a temporary name and gets its real name only
-// once it is complete, so a launcher that is stopped part way (or a PC that
-// goes off) never leaves half a copy where it would be taken for the real
-// thing. Then the original is renamed out of the way in one step, so it can't
-// be left half there, and only then deleted. Both temporary places are outside
-// Paks and ue4ss, where neither the game nor UE4SS would load what is left.
+// once it is complete and written to the disk, so a launcher that is stopped
+// part way (or a PC that goes off) never leaves half a copy where it would be
+// taken for the real thing. Then the original is renamed out of the way in one
+// step, so it can't be left half there, and only then deleted. Both temporary
+// places are outside Paks and ue4ss, where neither the game nor UE4SS would
+// load what is left.
 func moveAcrossDrives(src, dst string) error {
 	if err := placeCopy(src, dst); err != nil {
 		return err
@@ -223,7 +225,8 @@ func moveAcrossDrives(src, dst string) error {
 	return nil
 }
 
-// placeCopy copies src to dst through a temporary copy.
+// placeCopy copies src to dst through a temporary copy. When it returns, the
+// copy is on the disk, so the original can be deleted.
 func placeCopy(src, dst string) error {
 	var err error
 	for i, holder := range []string{holdingDir(dst), filepath.Dir(dst)} {
@@ -233,7 +236,9 @@ func placeCopy(src, dst string) error {
 		tmp := join(holder, copyingDir, filepath.Base(dst))
 		os.RemoveAll(tmp) // a leftover from a launcher that was stopped
 		if err = copyTree(src, tmp); err == nil {
-			err = renameRetrying(tmp, dst, false)
+			if err = renameRetrying(tmp, dst, false); err == nil {
+				syncDir(filepath.Dir(dst))
+			}
 		}
 		os.RemoveAll(tmp) // nothing is left there when the rename worked
 		os.Remove(join(holder, copyingDir))
@@ -329,13 +334,17 @@ func (g Game) sweepLeftovers() {
 	sweepLeftovers(dirs...)
 }
 
+// copyTree copies src to dst for a move to another drive, whose original is
+// deleted next. So every file and folder is written to the disk before it
+// returns: a drive keeps new files in memory for a while, and a PC that goes
+// off then would leave empty copies of mods that are already deleted.
 func copyTree(src, dst string) error {
 	st, err := os.Lstat(src)
 	if err != nil {
 		return err
 	}
 	if !st.IsDir() {
-		return copyFile(src, dst, st.Mode())
+		return copyFileTo(src, dst, st.Mode(), true)
 	}
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
@@ -349,14 +358,32 @@ func copyTree(src, dst string) error {
 			return err
 		}
 	}
+	syncDir(dst)
 	return nil
+}
+
+// syncFile writes a file to the disk now. A variable so the tests can watch it.
+var syncFile = (*os.File).Sync
+
+// syncDir writes a folder's list of names to the disk now, so the files just
+// put in it are found there after a PC that goes off. Windows can't do this
+// for a folder (it keeps its own record of them), so errors are ignored.
+func syncDir(dir string) {
+	if f, err := os.Open(dir); err == nil {
+		f.Sync()
+		f.Close()
+	}
 }
 
 // copyFile copies a file and keeps its date (the Mod Loader picks the newest of
 // two same-named files, so dates matter). The copy is written next to dst and
 // then renamed over it, which replaces the old file in one step (on Windows
 // too), so there is never a moment with neither the old nor the new file.
-func copyFile(src, dst string, mode os.FileMode) error {
+func copyFile(src, dst string, mode os.FileMode) error { return copyFileTo(src, dst, mode, false) }
+
+// copyFileTo is copyFile; durable also writes the copy to the disk before it
+// gets its name, for a copy whose original is deleted next.
+func copyFileTo(src, dst string, mode os.FileMode, durable bool) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -378,6 +405,15 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		out.Close()
 		os.Remove(tmp)
 		return err
+	}
+	if durable {
+		// a drive that can't be asked to do this (some network drives) writes
+		// the file in its own time; any other error means it may not be written
+		if err := syncFile(out); err != nil && !errors.Is(err, errors.ErrUnsupported) && !errors.Is(err, syscall.EINVAL) {
+			out.Close()
+			os.Remove(tmp)
+			return err
+		}
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)
@@ -808,7 +844,17 @@ func filesNamed(dir, st string) []string {
 	return out
 }
 
-func stem(name string) string { return strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name))) }
+// stem is the name that ties a file to the other files of its mod: the
+// .pak, .utoc, .ucas and .sig of one pak mod share it. Any other file has a
+// name of its own and is settled alone (UE4SS.dll must not go with UE4SS.log,
+// which UE4SS writes at every game start).
+func stem(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".pak", ".utoc", ".ucas", ".sig":
+		return strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))
+	}
+	return "\x00" + strings.ToLower(name)
+}
 
 func modTime(p string) time.Time {
 	if st, err := os.Lstat(p); err == nil {
@@ -845,6 +891,10 @@ func (g Game) switchTo(target string) (SwitchResult, error) {
 		return res, errGameRunning
 	}
 	g.sweepLeftovers()
+	// the folder in use is never one a storage move is still copying into: a
+	// note of such a move left in it (the launcher was stopped just after the
+	// move was saved) would let choosing this folder again clear mods from it
+	os.Remove(join(g.Storage(), movingHere))
 	s := &switcher{g: g, res: &res, aside: map[string]string{}}
 	if err := s.takeOverUnfinished(target); err != nil {
 		return res, err

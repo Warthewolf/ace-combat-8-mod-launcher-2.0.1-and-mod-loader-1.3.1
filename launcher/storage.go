@@ -28,7 +28,8 @@ type StorageResult struct {
 }
 
 // movingHere is written into the new storage folder while a move to it is
-// under way.
+// under way, and deleted as soon as the new folder is in use: from then on,
+// what was copied there is the real thing.
 const movingHere = ".ace8-moving-here.json"
 
 // storageMove is what movingHere holds: where the move comes from, and the
@@ -245,6 +246,12 @@ func (g Game) moveStorage(target string) (StorageResult, error) {
 		updateSettings(func(s *Settings) { s.StorageDir, s.StorageGame = before.StorageDir, before.StorageGame })
 		return fail(fmt.Sprintf("the launcher could not save its settings (%v).", err))
 	}
+	// the new folder is in use: the note goes before any original is deleted,
+	// or choosing this folder again later could clear away mods kept only here
+	if err := os.Remove(join(target, movingHere)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logf("storage move: could not delete %s: %v", join(target, movingHere), err)
+	}
+	syncDir(target)
 
 	// removed mods remember where they came from: point them at the new folder
 	if subs, err := os.ReadDir(join(target, "Removed mods")); err == nil {
@@ -275,7 +282,6 @@ func (g Game) moveStorage(target string) (StorageResult, error) {
 			}
 		}
 	}
-	os.Remove(join(target, movingHere))
 	os.Remove(join(old, "README - what is this folder.txt"))
 	removeEmptyTree(join(old, "Adding"))
 	sweepLeftovers(old, join(old, "Removed mods"), join(old, "Switched off"))
@@ -288,7 +294,9 @@ func (g Game) moveStorage(target string) (StorageResult, error) {
 // clearStoppedMove: a move from old to target that was stopped part way (the
 // launcher was closed during a long copy to another drive) left copies in
 // target while their originals stayed in old. They are cleared away so the
-// move can simply start again. It reports whether there was such a move.
+// move can simply start again. Target was never in use (the note goes as soon
+// as it is), so every copy goes, also one whose original was restored, deleted
+// or switched since. It reports whether there was such a move.
 func clearStoppedMove(old, target string) bool {
 	b, err := os.ReadFile(join(target, movingHere))
 	if err != nil {
@@ -299,7 +307,7 @@ func clearStoppedMove(old, target string) bool {
 		return false
 	}
 	for _, c := range m.Copies {
-		if lexists(c.From) && isInside(c.To, target) && !samePath(c.To, target) {
+		if isInside(c.To, target) && !samePath(c.To, target) {
 			removeRetrying(c.To)
 		}
 	}
@@ -342,6 +350,7 @@ func (g Game) leaveMissingStorage(old, target string, toDefault bool, res Storag
 	}); err != nil {
 		return res, fmt.Errorf("the launcher could not save its settings (%v). The storage folder was not changed", err)
 	}
+	os.Remove(join(target, movingHere)) // in use now: what is in it is the real thing
 	writeStorageReadme(g)
 	logf("storage folder changed from %s, which can't be found, to %s; nothing could be moved from it", old, target)
 	return res, nil
