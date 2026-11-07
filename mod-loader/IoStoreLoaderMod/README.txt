@@ -82,8 +82,9 @@ Paks already present in the game's native mount table are skipped as well.
 Changing the order or switching mods off (optional)
 ---------------------------------------------------
 Use ACE8 Mod Launcher. Its Mods page switches mods on and off and changes
-the order (drag a mod, or use the arrow buttons), and shows how the last game
-start went. Changes apply the next time the game starts.
+the order (drag a mod by its handle, or use its up and down arrow
+buttons). Its Play page shows how the last game start went. Changes apply
+the next time the game starts.
 
 loadorder.txt can also be edited by hand: one mod per line, "+Name" is on,
 "-Name" is off. Mods in ~mods are written "~mods\Name". Mods that are not in
@@ -99,8 +100,8 @@ ACE8 Mod Launcher lists .pak mods too, and keeps these lines when it saves.
 
 Checking it worked
 ------------------
-Open AC8IoStoreLoader.log in IoStoreLoaderMod (or "Show the Mod Loader's log" in
-ACE8 Mod Launcher). A good start ends with lines like
+Open AC8IoStoreLoader.log in IoStoreLoaderMod, or press "Mod Loader log"
+in ACE8 Mod Launcher. A good start ends with lines like
 
     done: 3 of 3 attempted mount requests returned success (3 planned, 3 mod(s))
     new files: 3 explicit UTOC containers handed to the game's package store (3 UTOC successes this pass); Legacy sidecars are registered by the engine
