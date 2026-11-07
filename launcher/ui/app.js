@@ -257,7 +257,8 @@ function applyOS() {
   document.documentElement.dataset.os = os;
   if (os === 'linux') {
     for (const b of $$('[data-fm]')) b.textContent = 'Open folder';
-    for (const p of $$('#page-help .path')) if (!p.textContent.includes('~')) p.textContent = p.textContent.replace(/\\/g, '/');
+    // Windows paths get forward slashes; home-folder paths (~/...) are Linux paths already
+    for (const p of $$('#page-help .path')) if (!p.textContent.startsWith('~')) p.textContent = p.textContent.replace(/\\/g, '/');
     // on Linux, how the game is started is a step everyone needs, not an advanced detail
     $('#startBlock').open = true;
   }
@@ -274,7 +275,9 @@ function render() {
   renderPlay();
   renderMods();
   renderSettings();
+  $('#btnTourRail').hidden = !STATE.game.found;
   restoreFocus(f);
+  tourMaybeStart();
 }
 
 function currentMode() { return STATE.mode.mode; }
@@ -328,7 +331,6 @@ function renderPlay() {
   $('#findGame').hidden = s.game.found;
   $('#playBody').hidden = !s.game.found;
   if (!s.game.found) return;
-  $('#welcome').hidden = !!s.settings.welcomeDone;
 
   const m = currentMode();
   const sw = $('#modeSwitch');
@@ -350,8 +352,10 @@ function renderPlay() {
     else note.textContent = '';
   }
   renderPlayBar();
+  renderFirstSteps();
   renderTodo();
   renderLastRun();
+  tourPlaceSoon();
 }
 
 // the launch bar and the line under it
@@ -439,12 +443,15 @@ function renderTodo() {
     cards.push(card('bad', 'Finish switching', '<p>The last switch stopped halfway: some mod files are in the game and some in storage. Nothing is lost. Pick one to finish.</p>',
       [{ label: 'Make it Modded', fn: () => doSwitch('modded'), disabled: busyLocal }, { label: 'Make it Unmodded', fn: () => doSwitch('unmodded'), disabled: busyLocal }]));
   }
-  if (m === 'none' || (m === 'modded' && (!su.ue4ss || !su.loader))) {
+  if (setupMissingIn(s)) {
     const title = m === 'none' ? 'Step 1: Set up modding' : 'Set up modding';
-    if (su.bundleFound) cards.push(card('warn', title, `<p>Adds what mods need (UE4SS and the Mod Loader ${esc(su.bundled)}) to the game folder. The game's own files aren't changed, and Unmodded takes it all out again.</p>`,
-      [{ label: 'Set up modding', busyLabel: 'Setting up…', busy: setupRunning, kind: 'primary', fn: () => doSetup(), disabled: busyLocal }]));
-    else cards.push(card('warn', title, '<p>Mods need UE4SS and the Mod Loader in the game.</p>' + manualSetupHtml,
-      [{ label: 'Open the game folder', kind: 'primary', fn: () => reveal({ what: 'game' }) }]));
+    // while the First steps list shows, its first step is the setup: no second card for it
+    const c = firstStepsShown() ? null
+      : su.bundleFound ? card('warn', title, `<p>Adds what mods need (UE4SS and the Mod Loader ${esc(su.bundled)}) to the game folder. The game's own files aren't changed, and Unmodded takes it all out again.</p>`,
+        [{ label: 'Set up modding', busyLabel: 'Setting up…', busy: setupRunning, kind: 'primary', fn: () => doSetup(), disabled: busyLocal }])
+      : card('warn', title, '<p>Mods need UE4SS and the Mod Loader in the game.</p>' + manualSetupHtml,
+        [{ label: 'Open the game folder', kind: 'primary', fn: () => reveal({ what: 'game' }) }]);
+    if (c) { c.dataset.card = 'setup'; cards.push(c); }
   } else if (m === 'modded' && !su.loaderOn) {
     cards.push(card('warn', 'Mod Loader is off', '<p>No pak mods will load.</p>', [{ label: 'Switch it on', busyLabel: 'Switching on…', busy: setupRunning, kind: 'primary', fn: () => doSetup(), disabled: busyLocal }]));
   } else if (su.canUpdate && m === 'modded') {
@@ -464,7 +471,9 @@ function renderTodo() {
       [{ label: 'Hide', kind: 'ghost', fn: () => { lsSet('ace8ml-hide-steamtip', '1'); renderTodo(); } }]));
   }
   if (isLinux() && s.linux && !s.linux.set && (m === 'modded' || m === 'none')) {
-    cards.push(card('warn', 'One step in Steam', `<p>For Modded, Steam needs the launcher's line in the game's launch options. You only do this once.</p>${linuxSteps(s.linux)}`, linuxButtons(s.linux, true)));
+    const c = card('warn', 'One step in Steam', `<p>For Modded, Steam needs the launcher's line in the game's launch options. You only do this once.</p>${linuxSteps(s.linux)}`, linuxButtons(s.linux, true));
+    c.dataset.card = 'steam-line';
+    cards.push(c);
   }
   const attention = needsALook();
   if (attention.length && m !== 'mixed') {
@@ -701,7 +710,6 @@ async function readyToAdd() {
   return doSetup({ next: false });
 }
 
-$('#btnWelcome').onclick = () => { $('#welcome').hidden = true; saveSetting({ welcomeDone: true }, { quiet: true }); };
 $('#btnShowLog').onclick = $('#btnShowLog2').onclick = showLoaderLog;
 $('#btnShowUe4ssLog').onclick = $('#btnShowUe4ssLog2').onclick = showUe4ssLog;
 async function readLog(path) {
@@ -794,6 +802,7 @@ function renderMods() {
   $('#removedSub').textContent = s.removed.length ? plural(s.removed.length, 'mod') : '';
   rl.innerHTML = '';
   for (const r of s.removed) rl.appendChild(removedRow(r));
+  tourPlaceSoon();
 }
 
 const gripSVG = '<svg viewBox="0 0 12 16" aria-hidden="true"><circle cx="3" cy="3" r="1.4"/><circle cx="9" cy="3" r="1.4"/><circle cx="3" cy="8" r="1.4"/><circle cx="9" cy="8" r="1.4"/><circle cx="3" cy="13" r="1.4"/><circle cx="9" cy="13" r="1.4"/></svg>';
@@ -1345,7 +1354,7 @@ function storageMoved(r) {
 $('#btnPickStorage').onclick = pickStorage;
 $('#btnDefaultStorage').onclick = defaultStorage;
 $('#btnLauncherLog').onclick = () => reveal({ what: 'launcherlog' });
-$('#btnReport').onclick = async () => {
+$('#btnReport').onclick = $('#btnReport2').onclick = async () => {
   let r;
   try { r = await api('report'); } catch (e) { toast(e.message, 'bad'); return; }
   if (!r.ok || typeof r.text !== 'string') { toast(r.error || 'The report could not be made.', 'bad'); return; }
@@ -1393,6 +1402,302 @@ window.addEventListener('pagehide', () => {
 });
 window.addEventListener('pageshow', ev => { if (ev.persisted) api('ping').catch(() => {}); });
 setInterval(() => api('ping').catch(() => {}), 20000);
+
+// ---------------------------------------------------------------- first steps
+// A short list on the Play page that ticks itself from the state: set up modding, add a mod,
+// play Modded. It shows once the tour has been seen (or skipped) until all three are done or it is
+// hidden, and stands in for the "Set up modding" card meanwhile, so there is one next thing to do.
+const FS_HIDE = 'ace8ml-hide-firststeps';
+const setupMissingIn = s => { const m = s.mode.mode, su = s.setup; return m === 'none' || (m === 'modded' && (!su.ue4ss || !su.loader)); };
+function firstStepsDone(s) {
+  return [!!(s.setup.ue4ss && s.setup.loader), s.pakMods.length + s.scriptMods.length > 0, !!s.run];
+}
+function firstStepsShown() {
+  const s = STATE;
+  if (!s || !s.game.found || !(s.settings.welcomeDone || tourSeen) || lsGet(FS_HIDE) === '1') return false;
+  if (s.game.storageMissing || s.mode.mode === 'mixed' || s.unfinishedSwitch) return false;
+  return firstStepsDone(s).includes(false);
+}
+function renderFirstSteps() {
+  const box = $('#firstSteps');
+  box.hidden = !firstStepsShown();
+  if (box.hidden) return;
+  const s = STATE, su = s.setup, m = currentMode(), st = STATUS || s.status;
+  const done = firstStepsDone(s), now = done.indexOf(false), total = s.pakMods.length + s.scriptMods.length;
+  const lineMissing = isLinux() && s.linux && !s.linux.set;
+  const steps = [
+    { title: 'Set up modding',
+      text: done[0] ? 'UE4SS and the Mod Loader are set up.'
+        : su.bundleFound ? 'Adds what mods need (UE4SS and the Mod Loader) to the game folder. The game\'s own files aren\'t changed.'
+          : 'Copy the Game folder from the Mod Loader download into the ACE COMBAT 8 folder. The launcher notices by itself.',
+      btn: su.bundleFound
+        ? { label: 'Set up modding', busy: setupRunning && 'Setting up…', off: busyLocal && !setupRunning && 'One moment.', fn: () => doSetup() }
+        : { label: 'Open the game folder', fn: () => reveal({ what: 'game' }) } },
+    { title: 'Add a mod',
+      text: done[1] ? 'You have ' + plural(total, 'mod') + '.' : 'Drop a mod\'s .zip onto this window, or press Add a mod…',
+      btn: { label: 'Add a mod…', fn: () => { go('mods'); chooseAndAdd(false); } } },
+    { title: 'Play Modded',
+      text: 'Pick Modded and press Play modded. Offline only: for online play, pick Unmodded.' + (lineMissing ? ' Steam needs the launcher\'s line first (One step in Steam).' : ''),
+      btn: m === 'unmodded'
+        ? { label: 'Switch to Modded', off: $('#optModded').getAttribute('aria-disabled') === 'true' && 'One moment.', fn: () => doSwitch('modded') }
+        : { label: 'Play modded', off: (!done[0] && 'Set up modding first.') || (m !== 'modded' && 'Pick Modded first.') || ($('#btnPlay').disabled && (st.gameRunning ? 'The game is running.' : 'One moment.')), fn: () => $('#btnPlay').click() } },
+  ];
+  $('#fsList').replaceChildren(...steps.map((x, i) => {
+    const li = el(`<li class="fs-step ${done[i] ? 'done' : i === now ? 'now' : 'later'}" data-step="${i + 1}">
+      <span class="fs-lamp" aria-hidden="true"></span><span class="fs-n" aria-hidden="true">${i + 1}</span>
+      <div class="fs-text"><b>${esc(x.title)}</b><span class="sr-only">${done[i] ? ': done.' : ':'}</span> <span class="fs-desc">${esc(x.text)}</span></div></li>`);
+    if (done[i]) { li.appendChild(el('<span class="fs-ok" aria-hidden="true">Done</span>')); return li; }
+    // the next step's button is the bright one; for playing, the Play bar itself is
+    const b = el(`<button class="btn ${i === now && !(i === 2 && m === 'modded') ? 'primary' : ''}" data-fid="fs:${i + 1}">${esc(x.btn.busy || x.btn.label)}</button>`);
+    if (x.btn.busy) { b.setAttribute('aria-disabled', 'true'); b.classList.add('busy'); }
+    if (x.btn.off) { b.disabled = true; b.title = x.btn.off; }
+    b.onclick = () => { if (b.getAttribute('aria-disabled') !== 'true') x.btn.fn(); };
+    li.appendChild(b);
+    return li;
+  }));
+}
+$('#fsHide').onclick = () => {
+  lsSet(FS_HIDE, '1');
+  renderPlay();
+  toast('First steps hidden. Help, Quick start, has the same steps.');
+};
+
+// ---------------------------------------------------------------- the tour
+// A short walk through the window, one thing at a time. It starts by itself once, the first time
+// the game is found (settings.welcomeDone), and again from Help or the rail. The steps are picked
+// from the live state; each points at one thing, which stays usable while the rest is dimmed.
+const tourTodo = name => () => $$('#todoTop .card, #todo .card').find(c => c.dataset.card === name);
+const steamLineMissing = s => s.platform === 'linux' && !!s.linux && !s.linux.set;
+const TOUR = [
+  { id: 'mode', page: 'play', anchor: () => $('#modeSwitch'), title: 'Modded or Unmodded',
+    body: () => `<p><b>Modded</b> starts the game with your mods. Anti-cheat (the game's protection for online play) is off, so it's offline and single player only.</p>
+      <p><b>Unmodded</b> is the normal game with anti-cheat on. Pick it to play online.</p>
+      <p class="fine">Switching only moves the mod files out of the game or back in. Nothing is deleted.</p>` },
+  { id: 'setup', page: 'play', when: setupMissingIn, title: 'Set up modding (once)',
+    anchor: () => {
+      const row = $('#firstSteps:not([hidden]) .fs-step[data-step="1"]'), c = !row && tourTodo('setup')();
+      return row || (c && [c, c.querySelector('.row')]);
+    },
+    body: s => s.setup.bundleFound
+      ? `<p>Mods need two helpers in the game folder: <b>UE4SS</b>, which runs mods inside the game, and the <b>Mod Loader</b>, which loads them.</p>
+        <p>Press <b>Set up modding</b> and the launcher adds both. The game's own files aren't changed.</p>`
+      : `<p>Mods need two helpers in the game folder: <b>UE4SS</b> and the <b>Mod Loader</b>. They're in the <b>War's Mod Loader</b> folder that came in the same download as the launcher.</p>
+        <p>Copy that folder's <b>Game</b> folder into the ACE COMBAT 8 folder. If it asks, choose to merge the folders. The launcher notices by itself.</p>
+        <p class="fine"><b>Open the game folder</b> shows you the ACE COMBAT 8 folder.</p>`,
+    // with the install files next to the launcher, the tour can do it there and then
+    extra: s => s.setup.bundleFound
+      ? { label: 'Set up now', fn: btn => withBusy(btn, 'tour-setup', 'Setting up…', () => doSetup({ next: false })) } : null },
+  { id: 'add', page: 'mods', anchor: () => $('#btnAddFiles'), title: 'Add a mod',
+    body: s => `<p>Mods usually download as a <b>.zip</b> file. Drag it onto this window and let go, anywhere. ${s.hasPicker ? 'Or press <b>Add a mod…</b> and pick it.' : 'Or press <b>Add a mod…</b> and type or paste where it is.'}</p>
+      <p>The launcher puts every file where it belongs. If it asks which version you want, pick one.</p>
+      <p class="fine">A .7z or .rar file? Unpack it first, then drag in the folder, or press <b>Add unzipped folder…</b>.${setupMissingIn(s) ? ' If modding isn\'t set up yet, the launcher offers to do that first.' : ''}</p>` },
+  { id: 'order', page: 'mods', anchor: () => $('#pakList .item') || $('#scriptList .item') || $('#pakEmpty'), title: 'Switch mods on or off',
+    body: s => `<p>${s.pakMods.length + s.scriptMods.length ? '' : 'Your mods show up here. '}Each mod has a switch, so you can turn it off without removing it.</p>
+      <p>If two mods change the same thing, the lower one in the list wins. Drag a mod down, or use its ▼ button, to make it win.</p>
+      <p class="fine">Changes count the next time the game starts.</p>` },
+  { id: 'play', page: 'play', title: 'Press Play',
+    anchor: s => { const c = steamLineMissing(s) && tourTodo('steam-line')(); return c ? [c, c.querySelector('.row')] : $('#btnPlay'); },
+    body: s => s.platform !== 'linux'
+      ? `<p>Pick a mode and press <b>Play</b>.</p>
+        <p>When Modded, always start the game here, not with Steam's Play button. Steam's button turns anti-cheat on, and the mods won't load.</p>
+        <p class="fine">Steam has to be running. The launcher opens it if it isn't.</p>`
+      : steamLineMissing(s)
+        ? `<p>Pick a mode and press <b>Play</b>. Steam starts the game.</p>
+          <p>One thing first, once: for Modded, Steam needs the launcher's line in the game's launch options (a setting in Steam). Close Steam (Steam menu, Exit) and press <b>Set it for me</b>, or press <b>Copy the line</b> and paste it in Steam.</p>
+          <p class="fine">Both are also in Settings, Starting the game.</p>`
+        : `<p>Pick a mode and press <b>Play</b>. Steam starts the game.</p>
+          <p>Steam's own Play button and Game Mode on the Steam Deck start the game the right way too.</p>` },
+  { id: 'help', page: 'settings', anchor: () => $('#btnReport'), title: 'If something goes wrong',
+    body: () => `<p>After you play Modded, the Play page shows <b>Last game start</b>: each mod as Loaded, Not loaded or Failed, and why.</p>
+      <p>Still stuck? Press <b>Copy support report</b> here and paste it in a message to <b>@voidcallsreaper</b> on Discord.</p>
+      <p class="fine">Help has the usual fixes, and this tour.</p>` },
+];
+let tour = null;       // the open tour: {id, from: the page it was opened on, focus}
+let tourSeen = false;  // this window has shown the tour: it doesn't start by itself again
+const tourList = () => TOUR.filter(t => !t.when || t.when(STATE));
+
+function tourMaybeStart() {
+  const s = STATE;
+  if (tour || tourSeen || !s || !s.game.found || s.settings.welcomeDone) return;
+  // these need the player first; the tour waits until they are sorted out
+  if (s.game.storageMissing || s.mode.mode === 'mixed' || s.unfinishedSwitch || $('#dlg').open) return;
+  tourStart();
+}
+function tourStart() {
+  if (!STATE || !STATE.game.found || tour) return;
+  tourSeen = true;
+  const cur = $$('.nav button').find(b => b.getAttribute('aria-current') === 'page');
+  tour = { id: null, from: cur ? cur.dataset.page : 'play', focus: document.activeElement };
+  $('#tour').hidden = false;
+  document.body.classList.add('touring');
+  renderPlay(); // the First steps list takes the setup card's place from now on
+  tourShow(tourList()[0].id, false);
+}
+function tourShow(id, anim = true) {
+  const list = tourList();
+  const i = Math.max(0, list.findIndex(t => t.id === id)), t = list[i];
+  const last = i === list.length - 1, ex = t.extra && t.extra(STATE);
+  tour.id = t.id;
+  go(t.page);
+  $('#tourTitle').textContent = t.title;
+  tourWords();
+  $('#tourBack').hidden = i === 0;
+  $('#tourSkip').hidden = last;
+  const next = $('#tourNext'), xb = $('#tourExtra');
+  next.textContent = last ? 'Done' : ex ? 'Later' : 'Next';
+  next.className = 'btn ' + (ex ? 'ghost' : 'primary');
+  xb.hidden = !ex;
+  if (ex) xb.textContent = ex.label;
+  tourScroll(t);
+  tourPlace(anim);
+  (ex ? xb : next).focus({ preventScroll: true });
+}
+// the count and the text follow the state (setting up drops a step; adding a mod changes the words)
+function tourWords() {
+  const list = tourList(), i = list.findIndex(t => t.id === tour.id), count = `Step ${i + 1} of ${list.length}`;
+  const body = list[i].body(STATE);
+  if ($('#tourCount').textContent !== count) $('#tourCount').textContent = count;
+  if (tour.body !== body) { tour.body = body; $('#tourBody').innerHTML = body; }
+}
+function tourGo(d) {
+  if (!tour) return;
+  const list = tourList(), i = list.findIndex(t => t.id === tour.id);
+  if (i + d >= list.length) { tourEnd(true); return; }
+  tourShow(list[Math.max(0, i + d)].id);
+}
+// Done, Skip and Esc: the tour doesn't start by itself again (saved quietly)
+function tourEnd(finished) {
+  if (!tour) return;
+  const { from, focus } = tour;
+  tourClose();
+  go(finished ? 'play' : from);
+  if (STATE && !STATE.settings.welcomeDone) { STATE.settings.welcomeDone = true; act('settings', { welcomeDone: true }, { quiet: true }); }
+  if (STATE && STATE.game.found) renderPlay();
+  if (!finished && focus && focus.isConnected && focus !== document.body && !focus.closest('[hidden]')) focus.focus({ preventScroll: true });
+}
+function tourClose() {
+  tour = null;
+  $('#tour').hidden = true;
+  document.body.classList.remove('touring');
+}
+
+const TOUR_PAD = 6, TOUR_GAP = 12, TOUR_EDGE = 12;
+// A step can name a smaller part of its target too (a card's buttons): used when the whole of it
+// and the tour card don't fit in the window together.
+function tourAnchor(t) {
+  const list = [].concat(t.anchor(STATE)).filter(a => a && a.isConnected && !a.closest('[hidden]'));
+  if (list.length < 2) return list[0] || null;
+  const room = $('#scroll').clientHeight - 2 * (TOUR_EDGE + TOUR_PAD) - TOUR_GAP - $('#tourCard').offsetHeight;
+  return list.find(a => a.getBoundingClientRect().height <= room) || list[list.length - 1];
+}
+// Brings the step's target into view with room for the card under it when the window allows.
+function tourScroll(t) {
+  const a = tourAnchor(t), sc = $('#scroll');
+  if (!a || !sc.contains(a)) return;
+  const sr = sc.getBoundingClientRect(), r = a.getBoundingClientRect(), ch = $('#tourCard').offsetHeight;
+  const pair = r.height + 2 * TOUR_PAD + TOUR_GAP + ch;
+  const want = pair <= sr.height - 2 * TOUR_EDGE ? (sr.height - pair) / 2 + TOUR_PAD : TOUR_EDGE + TOUR_PAD;
+  sc.scrollTop += r.top - sr.top - want;
+}
+// The card goes under the target, above it, or beside it; when none of those fit, into the corner
+// that covers least of it. The rest of the window is dimmed, with a hole over the target.
+let tourAnimTimer = 0;
+function tourPlace(anim) {
+  if (!tour || !STATE) return;
+  if (!STATE.game.found) { tourClose(); return; }
+  const list = tourList();
+  if (!list.some(t => t.id === tour.id)) {
+    // that step got done meanwhile (modding was set up): on to the next one
+    const after = TOUR.slice(TOUR.findIndex(t => t.id === tour.id) + 1).find(t => list.includes(t));
+    tourShow((after || list[list.length - 1]).id);
+    return;
+  }
+  tourWords();
+  const box = $('#tour'), card = $('#tourCard'), ring = $('#tourRing'), shade = $('#tourShade');
+  if (anim) { box.classList.add('moving'); clearTimeout(tourAnimTimer); tourAnimTimer = setTimeout(() => box.classList.remove('moving'), 320); }
+  const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+  const cw = card.offsetWidth, ch = card.offsetHeight, E = TOUR_EDGE;
+  const a = tourAnchor(TOUR.find(t => t.id === tour.id));
+  let h = null;
+  if (a) {
+    // only the part of the target inside the scrolling area counts
+    const r = a.getBoundingClientRect();
+    const clip = $('#scroll').contains(a) ? $('#scroll').getBoundingClientRect() : { top: 0, bottom: vh };
+    const top = Math.max(r.top, clip.top), bottom = Math.min(r.bottom, clip.bottom);
+    if (r.width && bottom - top > 4) h = { l: r.left - TOUR_PAD, t: top - TOUR_PAD, r: r.right + TOUR_PAD, b: bottom + TOUR_PAD };
+  }
+  ring.hidden = !h;
+  if (!h) {
+    shade.style.clipPath = '';
+    card.style.left = Math.max(E, (vw - cw) / 2) + 'px';
+    card.style.top = Math.max(E, (vh - ch) / 2) + 'px';
+    return;
+  }
+  Object.assign(ring.style, { left: h.l + 'px', top: h.t + 'px', width: h.r - h.l + 'px', height: h.b - h.t + 'px' });
+  shade.style.clipPath = `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${h.l}px ${h.t}px, ${h.l}px ${h.b}px, ${h.r}px ${h.b}px, ${h.r}px ${h.t}px, ${h.l}px ${h.t}px)`;
+  const clampX = x => Math.min(Math.max(E, x), vw - E - cw), clampY = y => Math.min(Math.max(E, y), vh - E - ch);
+  const fits = ([x, y]) => x >= E - 0.5 && y >= E - 0.5 && x + cw <= vw - E + 0.5 && y + ch <= vh - E + 0.5;
+  const area = (o, [x, y]) => o ? Math.max(0, Math.min(x + cw, o.r) - Math.max(x, o.l)) * Math.max(0, Math.min(y + ch, o.b) - Math.max(y, o.t)) : 0;
+  // messages in the corner: the card keeps clear of them too when it can
+  const rs = $$('#toasts .toast').map(t => t.getBoundingClientRect());
+  const msgs = rs.length ? { l: Math.min(...rs.map(r => r.left)), t: Math.min(...rs.map(r => r.top)), r: Math.max(...rs.map(r => r.right)), b: Math.max(...rs.map(r => r.bottom)) } : null;
+  const covers = p => area(h, p);
+  const corners = [[vw - E - cw, vh - E - ch], [vw - E - cw, E], [E, vh - E - ch], [E, E]];
+  const spots = [
+    [clampX(h.l), h.b + TOUR_GAP],      // under it
+    [clampX(h.l), h.t - TOUR_GAP - ch], // above it
+    [h.r + TOUR_GAP, clampY(h.t)],      // right of it
+    [h.l - TOUR_GAP - cw, clampY(h.t)], // left of it
+  ].concat(corners).filter(fits);
+  const at = spots.find(p => !covers(p) && !area(msgs, p)) || spots.find(p => !covers(p))
+    || corners.reduce((best, p) => covers(p) < covers(best) ? p : best);
+  card.style.left = Math.max(E, at[0]) + 'px';
+  card.style.top = Math.max(E, at[1]) + 'px';
+  // when it can't keep clear of a message, the card goes over it, so its buttons stay usable
+  card.classList.toggle('over-msgs', area(msgs, at) > 0);
+}
+let tourFrame = 0;
+function tourPlaceSoon() {
+  if (!tour || tourFrame) return;
+  tourFrame = requestAnimationFrame(() => { tourFrame = 0; tourPlace(false); });
+}
+
+$('#tourNext').onclick = () => tourGo(1);
+$('#tourBack').onclick = () => tourGo(-1);
+$('#tourSkip').onclick = () => tourEnd(false);
+$('#tourExtra').onclick = () => {
+  const t = tour && TOUR.find(x => x.id === tour.id), ex = t && t.extra && t.extra(STATE);
+  if (ex && $('#tourExtra').getAttribute('aria-disabled') !== 'true') ex.fn($('#tourExtra'));
+};
+$('#btnTour').onclick = $('#btnTourRail').onclick = () => {
+  if (STATE && !STATE.game.found) { toast('Choose the game folder first. The tour needs it.', 'warn'); go('play'); return; }
+  tourStart();
+};
+document.addEventListener('keydown', e => {
+  // a dialog or the drop overlay over the tour handles its own keys
+  if (!tour || $('#dlg').open || !$('#drop').hidden) return;
+  if (e.key === 'Escape') { e.preventDefault(); tourEnd(false); return; }
+  const inCard = $('#tourCard').contains(document.activeElement);
+  if (e.key === 'Tab') {
+    // keyboard focus stays in the card
+    const f = $$('#tourCard button').filter(b => !b.hidden && !b.disabled);
+    let i = f.indexOf(document.activeElement);
+    if (i < 0) i = e.shiftKey ? 0 : -1;
+    e.preventDefault();
+    f[(i + (e.shiftKey ? -1 : 1) + f.length) % f.length].focus();
+  } else if (inCard && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    // arrow keys page through the steps; the last one closes only with Done
+    e.preventDefault();
+    if (e.key === 'ArrowLeft' && !$('#tourBack').hidden) tourGo(-1);
+    else if (e.key === 'ArrowRight' && $('#tourNext').textContent !== 'Done') tourGo(1);
+  }
+});
+addEventListener('resize', () => tourPlace(false));
+$('#scroll').addEventListener('scroll', () => tourPlace(false), { passive: true });
+if (window.ResizeObserver) new ResizeObserver(tourPlaceSoon).observe($('#tourCard'));
+// a new message may sit where the card is
+if (window.MutationObserver) new MutationObserver(tourPlaceSoon).observe($('#toasts'), { childList: true });
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(tourPlaceSoon);
 
 // start
 go(['play', 'mods', 'settings', 'help'].includes(lsGet('ace8ml-page')) ? lsGet('ace8ml-page') : 'play');
