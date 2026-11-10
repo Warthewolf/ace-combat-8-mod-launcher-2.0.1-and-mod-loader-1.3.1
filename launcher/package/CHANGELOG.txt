@@ -28,14 +28,21 @@ Safer with your mods
   made, a pack of skins) replaces only that mod. Before, the whole folder was
   deleted, with the other mods in it.
 - A different mod that happens to have the same folder name ("New mod",
-  "Paks") no longer replaces yours: it is added as "Name (2)".
+  "Paks") no longer replaces yours: it is added as "Name (2)". A new
+  version of the same mod still updates it, even when its file names
+  changed; the old copy is kept in Removed mods.
 - Switching no longer hides your mods when some are in the game and some in
   storage (a mod put into ~mods by hand while Unmodded): the two are
   combined.
 - If the launcher is closed or the PC turns off during a switch, the next
   switch finishes or undoes it properly. With the storage folder on another
   drive, a switch cut short never leaves half a copy that looks like your
-  mods.
+  mods, and copies are written to the disk before the originals are
+  deleted.
+- If an update can't finish because another program (often antivirus)
+  holds the new files, the old version is put back the next time the
+  launcher starts, with a script mod's settings. Before, the old version
+  could be deleted.
 - When Steam moves the game to another library, the launcher keeps using
   your storage folder, so switched-off and removed mods don't go missing.
   "Use the default" while the storage folder can't be found no longer leaves
@@ -51,14 +58,17 @@ Safer with your mods
 
 Adding and updating mods
 - An update whose folder has a new name ("Hornet v1" to "Hornet v2") keeps
-  the mod's place in the load order and its on/off state. Downloading a
+  the mod's place in the load order and its on/off state: a mod you
+  switched off stays off. Downloading a
   script mod again ("CoolCam (1).zip") updates it instead of adding a second
   copy that runs as well.
 - A picked version is named after its download ("Su-57 Liveries - Red").
   When several downloads are added together, the launcher asks about all
   their versions before adding anything.
-- LogicMods that come as .pak + .ucas + .utoc are installed whole. Pak files
-  in a script mod's folder are added where the Mod Loader loads them.
+- LogicMods that come as .pak + .ucas + .utoc are installed whole, and
+  picking the other version of a LogicMods mod later replaces the first.
+  Pak files in a script mod's folder are added where the Mod Loader loads
+  them.
 - A mod that won't load as it is (a missing .ucas, a .pak mod with an old
   Mod Loader) is added with a warning saying what to do.
 - Setup no longer says "Modding is set up" when UE4SS.dll is missing (some

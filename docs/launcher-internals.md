@@ -221,7 +221,9 @@ When Steam moves the game to another library, the launcher finds it again and
 keeps the storage folder: a chosen folder stays chosen, and the old default
 `<old game folder> - mod storage` is kept as the chosen folder if it holds mods.
 A game folder on a drive that isn't connected is not replaced by another copy of
-the game on its own: the window offers that copy (`game.elsewhere`).
+the game on its own: the window offers that copy (`game.elsewhere`). Using that
+copy leaves a chosen storage folder with the game whose drive is missing, and a
+game folder the player chooses always wins over a search still running.
 
 ## Adding mods
 
@@ -244,9 +246,13 @@ into a unit:
 
 **Update or new mod?** An add counts as an update of an installed mod only when
 it is plausibly the same mod: it shares at least one `.utoc`/`.ucas`/`.pak` file
-name with it (or the installed folder is empty). A folder name alone never
-decides, so a different mod that happens to be called "New mod" or "Paks" is
-added as "Name (2)". An update whose folder has a new name ("Hornet v1" →
+name with it, the installed folder is empty, or, when no file name matches, its
+`.utoc` files change the same game files (package IDs) as the installed ones;
+then the old copy goes to Removed mods, in case it was a different mod after
+all. A folder name alone never decides, so a different mod that happens to be
+called "New mod" or "Paks" is added as "Name (2)". LogicMods mods match other
+LogicMods mods by their `.pak` names. An update that replaces only part of an
+installed mod gives the new one that mod's on/off state and place. An update whose folder has a new name ("Hornet v1" →
 "Hornet v2") keeps the old one's place in the load order, its on/off state and
 its first-added date. Script mods match by name ("CoolCam (1).zip" and
 "CoolCam-1.3.0" update "CoolCam").
