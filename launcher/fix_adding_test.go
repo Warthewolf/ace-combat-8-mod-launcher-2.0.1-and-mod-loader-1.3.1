@@ -236,8 +236,7 @@ func TestFixBundledUE4SSModsAndOffState(t *testing.T) {
 	md := join(g.ue4ssRoot(), "Mods")
 	write(t, join(md, "mods.txt"), "IoStoreLoaderMod : 1\r\nSplitScreenMod : 0\r\nHandOff : 0\r\n\r\n; Built-in keybinds, do not move up!\r\nKeybinds : 1\r\n")
 	write(t, join(md, "SplitScreenMod", "Scripts", "main.lua"), "-- old")
-	write(t, join(md, "HandOff", "Scripts", "main.lua"), "-- old")
-	write(t, join(md, "HandOff", "enabled.txt"), "") // enabled.txt, but "HandOff : 0": off
+	write(t, join(md, "HandOff", "Scripts", "main.lua"), "-- old") // no enabled.txt, and "HandOff : 0": off
 	z := join(t.TempDir(), "Cool Mod with UE4SS.zip")
 	makeZip(t, z, map[string]string{"ue4ss/Mods/SplitScreenMod/Scripts/main.lua": "-- new", "ue4ss/Mods/HandOff/Scripts/main.lua": "-- new"})
 	res, err := addFromPaths(g, []string{z}, nil)
