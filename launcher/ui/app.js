@@ -9,6 +9,7 @@ let STATE = null;
 let STATUS = null;
 let busyLocal = false;   // a switch or setup started from this window is running
 let setupRunning = false;
+let setupDone = Promise.resolve(); // settles when the setup started from this window is done
 let playing = false;     // a Play request is on its way
 let switchNote = null;   // {text, mode}: why the last switch failed; kept until the next switch or a mode change
 
@@ -61,22 +62,32 @@ async function openLink(url) {
 
 // A button whose action is running looks switched off (with a label saying so) until it is done;
 // pressing it again meanwhile does nothing. It keeps keyboard focus (aria-disabled, not disabled).
+// A list rebuilt meanwhile marks the button's new copy too (markBusy); both are cleared at the end.
 const inFlight = new Set();
 async function withBusy(btn, key, label, fn) {
   if (inFlight.has(key)) return undefined;
   inFlight.add(key);
-  const old = btn ? btn.textContent : '';
   if (btn) markBusy(btn, key, label);
   try { return await fn(); } finally {
     inFlight.delete(key);
-    if (btn && btn.isConnected) { btn.removeAttribute('aria-disabled'); btn.classList.remove('busy'); if (label) btn.textContent = old; }
+    for (const b of new Set([btn, ...$$('[data-busy-key]').filter(x => x.dataset.busyKey === key)])) if (b) unmarkBusy(b);
   }
 }
 function markBusy(btn, key, label) {
   if (!inFlight.has(key)) return;
+  btn.dataset.busyKey = key;
+  if (label && btn.dataset.busyText === undefined) btn.dataset.busyText = btn.textContent;
   btn.setAttribute('aria-disabled', 'true');
   btn.classList.add('busy');
   if (label) btn.textContent = label;
+}
+function unmarkBusy(btn) {
+  if (btn.dataset.busyKey === undefined) return;
+  btn.removeAttribute('aria-disabled');
+  btn.classList.remove('busy');
+  if (btn.dataset.busyText !== undefined) btn.textContent = btn.dataset.busyText;
+  delete btn.dataset.busyKey;
+  delete btn.dataset.busyText;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -363,15 +374,17 @@ function renderPlay() {
     else if (m === 'unmodded') note.textContent = 'Mods are switched off and kept in the mod storage folder.';
     else note.textContent = '';
   }
-  renderPlayBar();
-  renderFirstSteps();
+  renderPlayBar(true);
   renderTodo();
   renderLastRun();
   tourPlaceSoon();
 }
 
-// the launch bar and the line under it
-function renderPlayBar() {
+// The launch bar and the line under it. The First steps list copies the locks of Play and the mode
+// switch: withSteps draws it too; otherwise it is redrawn only when those locks changed (a start
+// that is still pending unlocks them after a while, with no news from the launcher).
+let fsLock = '';
+function renderPlayBar(withSteps) {
   if (!STATE || !STATE.game.found) return;
   const st = STATUS || STATE.status, m = currentMode();
   const play = $('#btnPlay');
@@ -385,6 +398,13 @@ function renderPlayBar() {
   $('#playHow').hidden = m === 'mixed';
   $('#playHow').textContent = modded ? (isLinux() ? 'Starts through Steam with anti-cheat off. Offline and single player only.' : 'Anti-cheat off. Offline and single player only.') : 'Starts through Steam with anti-cheat on.';
   renderLive();
+  const lock = play.disabled + '|' + $('#optModded').getAttribute('aria-disabled');
+  if (withSteps || lock !== fsLock) {
+    fsLock = lock;
+    const f = withSteps ? null : rememberFocus();
+    renderFirstSteps();
+    restoreFocus(f);
+  }
 }
 
 function renderLive() {
@@ -544,6 +564,7 @@ function renderLastRun() {
 async function doSwitch(to) {
   if (busyLocal) return;
   if (gameRunningNow()) { $('#modeNote').textContent = 'Close the game first, then switch.'; $('#modeNote').classList.add('bad'); return; }
+  if (playing || launchStarting()) { $('#modeNote').textContent = 'One moment: the game is starting.'; return; }
   busyLocal = true;
   switchNote = null;
   const sw = $('#modeSwitch'); sw.classList.add('working');
@@ -684,12 +705,14 @@ async function doSetup(opts = {}) {
   const fresh = !su.ue4ss || !su.loader;
   const doing = fresh ? 'Setting up modding…' : su.canUpdate ? 'Updating the Mod Loader…' : !su.loaderOn ? 'Switching the Mod Loader on…' : 'Repairing UE4SS and the Mod Loader…';
   busyLocal = true; setupRunning = true;
+  let ended;
+  setupDone = new Promise(res => { ended = res; });
   const sw = $('#modeSwitch'); sw.classList.add('working');
   const note = $('#modeNote'); note.classList.remove('bad'); note.textContent = doing;
   render();
   const t = toastProgress(doing);
   let r = null;
-  try { r = await act('setup', {}); } finally { t.remove(); busyLocal = false; setupRunning = false; sw.classList.remove('working'); }
+  try { r = await act('setup', {}); } finally { t.remove(); busyLocal = false; setupRunning = false; sw.classList.remove('working'); ended(); }
   render();
   if (!r) return false;
   const kept = r.kept && r.kept.length ? ['Kept your own: ' + r.kept.map(baseName).join(', ')] : [];
@@ -709,16 +732,22 @@ async function showManualSetup() {
 }
 
 // Adding needs the Mod Loader. Before setup, offer to set up first, then carry on with the same files.
+// A setup already running from this window is waited for, then the add carries on.
 async function readyToAdd() {
   const s = STATE;
   if (!s || !s.game.found) { toast('Choose the game folder first.', 'bad'); go('play'); return false; }
   if (gameRunningNow()) { toast(GAME_RUNNING, 'warn'); return false; }
   const m = currentMode();
   if (s.setup.loader || (m !== 'none' && m !== 'modded')) return true;
+  if (setupRunning) { await setupDone; return readyToAdd(); }
   if (!s.setup.bundleFound) { await showManualSetup(); return false; }
   const v = await dialog({ title: 'Set up modding first', html: '<p>Mods need UE4SS and the Mod Loader in the game. The launcher can add them now, then add your mod.</p>',
     buttons: [{ label: 'Cancel', value: 'cancel', kind: 'ghost' }, { label: 'Set up and add', value: 'go', kind: 'primary' }] });
   if (v !== 'go') return false;
+  // while the question was open, a setup may have started or finished
+  if (setupRunning) { await setupDone; return readyToAdd(); }
+  if (STATE.setup.loader) return true;
+  if (busyLocal) { toast('One moment: the launcher is busy. Add the mod again when it\'s done.', 'warn'); return false; }
   return doSetup({ next: false });
 }
 
@@ -1175,6 +1204,8 @@ async function showAddResult(r, paths, upload, before, name) {
   else toast(head, lines.length ? 'ok' : 'warn', { list });
   if (!lines.length) return;
   newKeys = fresh;
+  // the tour keeps its page and focus; the message says what was added, and the Mods page marks it
+  if (tour) { renderMods(); return; }
   go('mods');
   renderMods();
   // bring the new mod into view and give it focus
@@ -1585,13 +1616,13 @@ function tourGo(d) {
   if (i + d >= list.length) { tourEnd(true); return; }
   tourShow(list[Math.max(0, i + d)].id);
 }
-// Done, Skip and Esc: the tour doesn't start by itself again (saved quietly)
+// Done, Skip and Esc: the tour doesn't start by itself again (a save that fails says so)
 function tourEnd(finished) {
   if (!tour) return;
   const { from, focus } = tour;
   tourClose();
   go(finished ? 'play' : from);
-  if (STATE && !STATE.settings.welcomeDone) { STATE.settings.welcomeDone = true; act('settings', { welcomeDone: true }, { quiet: true }); }
+  if (STATE && !STATE.settings.welcomeDone) { STATE.settings.welcomeDone = true; act('settings', { welcomeDone: true }); }
   if (STATE && STATE.game.found) renderPlay();
   if (!finished && focus && focus.isConnected && focus !== document.body && !focus.closest('[hidden]')) focus.focus({ preventScroll: true });
 }
