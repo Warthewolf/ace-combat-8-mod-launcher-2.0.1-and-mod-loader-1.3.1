@@ -56,17 +56,9 @@ func ue4ssModsTxt(modsDir string) map[string]bool {
 		return out
 	}
 	for _, line := range strings.Split(decodeText(b), "\n") {
-		line = strings.TrimRight(line, "\r")
-		if strings.Contains(line, ";") || len(utf16.Encode([]rune(line))) <= 4 {
-			continue
+		if name, on := modsTxtName(strings.TrimRight(line, "\r")); name != "" {
+			out[name] = out[name] || on
 		}
-		line = strings.ReplaceAll(line, " ", "")
-		i := strings.Index(line, ":")
-		if i < 0 {
-			continue
-		}
-		name := line[:i]
-		out[name] = out[name] || strings.HasPrefix(line[strings.LastIndex(line, ":")+1:], "1")
 	}
 	return out
 }
@@ -196,7 +188,9 @@ func setScriptMod(ue4ssRoot, name string, on bool) error {
 			return err
 		}
 	}
-	if err := setModsTxtLine(modsDir, name, on, false); err != nil {
+	// also the lines with the name UE4SS gives it ("AC8 : 1" for AC8.Stonehenge):
+	// those are the ones UE4SS goes by
+	if err := setModsTxt(modsDir, name, mod.UE4SSName, on, false); err != nil {
 		return err
 	}
 	setModsJSON(modsDir, name, on)
@@ -206,6 +200,26 @@ func setScriptMod(ue4ssRoot, name string, on bool) error {
 // setModsTxtLine changes "Name : 0/1" in mods.txt. With add, a missing line is added
 // (above the Keybinds line UE4SS asks to keep last).
 func setModsTxtLine(modsDir, name string, on, add bool) error {
+	return setModsTxt(modsDir, name, "", on, add)
+}
+
+// modsTxtName is the name a mods.txt line gives, read the way UE4SS reads it
+// (see ue4ssModsTxt), and whether the line says on; "" for a line UE4SS skips.
+func modsTxtName(line string) (name string, on bool) {
+	if strings.Contains(line, ";") || len(utf16.Encode([]rune(line))) <= 4 {
+		return "", false
+	}
+	line = strings.ReplaceAll(line, " ", "")
+	i := strings.Index(line, ":")
+	if i < 0 {
+		return "", false
+	}
+	return line[:i], strings.HasPrefix(line[strings.LastIndex(line, ":")+1:], "1")
+}
+
+// setModsTxt is setModsTxtLine that also changes every line UE4SS reads as
+// exactly ue4ss (when not ""), keeping how the line spells the name.
+func setModsTxt(modsDir, name, ue4ss string, on, add bool) error {
 	p := join(modsDir, "mods.txt")
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -224,6 +238,14 @@ func setModsTxtLine(modsDir, name string, on, add bool) error {
 			if m[2] != v {
 				lines[i] = name + " : " + v
 				changed = true
+			}
+		} else if ue4ss != "" {
+			if n, was := modsTxtName(l); n == ue4ss {
+				found = true
+				if was != on {
+					lines[i] = strings.TrimSpace(l[:strings.Index(l, ":")]) + " : " + v
+					changed = true
+				}
 			}
 		}
 	}

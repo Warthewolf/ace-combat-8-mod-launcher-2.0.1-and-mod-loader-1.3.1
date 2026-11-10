@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf16"
 )
 
@@ -22,7 +23,14 @@ const maxSearchDepth = 6
 // foldPath finds dir\parts... the way Windows does, and Wine for the game on
 // Linux: exact first, then ignoring upper and lower case. "" when not there.
 // On Windows the exact look-up already ignores case, so nothing more is done.
-func foldPath(dir string, parts ...string) string {
+func foldPath(dir string, parts ...string) string { return folderNames(nil).foldPath(dir, parts...) }
+
+// folderNames remembers, for one scan, the names in each folder foldPath had
+// to read, so a folder of many mods is read once and not once for each file
+// looked for in it. A nil one remembers nothing.
+type folderNames map[string]map[string]string
+
+func (fn folderNames) foldPath(dir string, parts ...string) string {
 	p := dir
 	for _, part := range parts {
 		q := join(p, part)
@@ -33,23 +41,57 @@ func foldPath(dir string, parts ...string) string {
 		if runtime.GOOS == "windows" {
 			return ""
 		}
-		ents, err := os.ReadDir(p)
-		if err != nil {
-			return ""
-		}
-		found := ""
-		for _, e := range ents {
-			if strings.EqualFold(e.Name(), part) {
-				found = e.Name()
-				break
-			}
-		}
+		found := fn.find(p, part)
 		if found == "" {
 			return ""
 		}
 		p = join(p, found)
 	}
 	return p
+}
+
+// find is the first name in dir (A to Z) that matches name in any case, or "".
+func (fn folderNames) find(dir, name string) string {
+	if fn == nil {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			return ""
+		}
+		for _, e := range ents {
+			if strings.EqualFold(e.Name(), name) {
+				return e.Name()
+			}
+		}
+		return ""
+	}
+	names, ok := fn[dir]
+	if !ok {
+		names = map[string]string{}
+		if ents, err := os.ReadDir(dir); err == nil {
+			for _, e := range ents {
+				if k := foldKey(e.Name()); names[k] == "" {
+					names[k] = e.Name()
+				}
+			}
+		}
+		fn[dir] = names
+	}
+	return names[foldKey(name)]
+}
+
+// foldKey is the same for two names exactly when strings.EqualFold matches
+// them: each letter becomes the smallest of its upper and lower case forms.
+func foldKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		low := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			low = min(low, f)
+		}
+		b.WriteRune(low)
+	}
+	return b.String()
 }
 
 // isFileFold: a file at dir\parts..., in any case (see foldPath).
@@ -60,9 +102,11 @@ func isFileFold(dir string, parts ...string) bool {
 
 // sibling is the file next to p with the same name and extension ext, in any
 // case (see foldPath); "" when there is none.
-func sibling(p, ext string) string {
+func sibling(p, ext string) string { return folderNames(nil).sibling(p, ext) }
+
+func (fn folderNames) sibling(p, ext string) string {
 	dir, name := filepath.Split(p)
-	s := foldPath(filepath.Clean(dir), strings.TrimSuffix(name, filepath.Ext(name))+ext)
+	s := fn.foldPath(filepath.Clean(dir), strings.TrimSuffix(name, filepath.Ext(name))+ext)
 	if s == "" || !isFile(s) {
 		return ""
 	}
@@ -117,11 +161,13 @@ func isPakName(name string) bool { return strings.HasSuffix(strings.ToLower(name
 
 // isPakSidecar: a *_P.utoc next to a .pak of the same name. It belongs to the
 // .pak (the game mounts it with the .pak), so it is not a mod or container of its own.
-func isPakSidecar(path string) bool {
+func isPakSidecar(path string) bool { return folderNames(nil).isPakSidecar(path) }
+
+func (fn folderNames) isPakSidecar(path string) bool {
 	if !strings.HasSuffix(strings.ToLower(path), "_p.utoc") {
 		return false
 	}
-	return sibling(path, ".pak") != ""
+	return fn.sibling(path, ".pak") != ""
 }
 
 // containerKey is the name two containers clash on: the .utoc name (a .pak and
@@ -216,7 +262,7 @@ type Container struct {
 	native bool
 }
 
-func collectUtoc(dir string, depth int, paks bool, out *[]*Container) {
+func (fn folderNames) collectUtoc(dir string, depth int, paks bool, out *[]*Container) {
 	ents := listDir(dir, paks)
 	for pass := 0; pass < 2; pass++ {
 		for _, e := range ents {
@@ -225,11 +271,11 @@ func collectUtoc(dir string, depth int, paks bool, out *[]*Container) {
 			}
 			p := join(dir, e.name)
 			if !e.isDir {
-				if !(paks && isPakSidecar(p)) {
+				if !(paks && fn.isPakSidecar(p)) {
 					*out = append(*out, &Container{Path: p, Name: e.name, Mtime: e.mtime})
 				}
 			} else if depth < maxSearchDepth && !e.isLink && !isSkippedDir(e.name) {
-				collectUtoc(p, depth+1, paks, out)
+				fn.collectUtoc(p, depth+1, paks, out)
 			}
 		}
 	}
@@ -269,13 +315,16 @@ type PakMod struct {
 	Loads      int          `json:"loads"`             // containers the loader will mount next start
 	Added      *time.Time   `json:"added,omitempty"`   // added through the launcher
 	Updated    *time.Time   `json:"updated,omitempty"` // last updated through the launcher
+	// inStorage: a ~mods mod while the ~mods folder is in the mod storage
+	// folder (Unmodded), where the game doesn't see it
+	inStorage bool
 }
 
-func findMods(dir, prefix, where string, paks bool) []*PakMod {
+func (fn folderNames) findMods(dir, prefix, where string, paks bool) []*PakMod {
 	var mods []*PakMod
 	for _, e := range listDir(dir, paks) {
 		p := join(dir, e.name)
-		if !e.isDir && paks && isPakSidecar(p) {
+		if !e.isDir && paks && fn.isPakSidecar(p) {
 			continue
 		}
 		if e.isDir && (isSkippedDir(e.name) || !hasUtoc(p, 1, paks)) {
@@ -286,7 +335,7 @@ func findMods(dir, prefix, where string, paks bool) []*PakMod {
 			m.Name = strings.TrimSuffix(e.name, filepath.Ext(e.name))
 			m.Containers = []*Container{{Path: p, Name: e.name, Mtime: e.mtime}}
 		} else {
-			collectUtoc(p, 1, paks, &m.Containers)
+			fn.collectUtoc(p, 1, paks, &m.Containers)
 		}
 		mods = append(mods, m)
 	}
@@ -298,8 +347,15 @@ const skinListName = "zz_SkinStudio_SkinList"
 // scanPakMods finds every mod, in the loader's order, with loadorder.txt applied.
 func scanPakMods(loaderDir, tildeDir string) (mods []*PakMod, staleEntries []string) {
 	paks := loaderPaks(loaderDir)
-	found := findMods(loaderDir, "", "loader", paks)
-	found = append(found, findMods(tildeDir, `~mods\`, "tilde", paks)...)
+	fn := folderNames{}
+	found := fn.findMods(loaderDir, "", "loader", paks)
+	tilde := fn.findMods(tildeDir, `~mods\`, "tilde", paks)
+	if len(tilde) > 0 && !tildeInGame(tildeDir) {
+		for _, m := range tilde {
+			m.inStorage = true
+		}
+	}
+	found = append(found, tilde...)
 
 	text, _ := os.ReadFile(join(loaderDir, "loadorder.txt"))
 	placed := make([]bool, len(found))
@@ -344,10 +400,16 @@ func scanPakMods(loaderDir, tildeDir string) (mods []*PakMod, staleEntries []str
 		for _, c := range m.Containers {
 			c.native = paks && m.Where == "tilde" && isPakName(c.Name)
 		}
-		describeMod(m)
+		fn.describeMod(m)
 	}
-	checkContainers(mods)
+	fn.checkContainers(mods)
 	return mods, staleEntries
+}
+
+// tildeInGame: the ~mods folder dir is the game's own (Game\Content\Paks\~mods
+// in the folder with AceCombat8.exe), not the copy in the mod storage folder.
+func tildeInGame(dir string) bool {
+	return looksLikeGame(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(dir)))))
 }
 
 // checkContainers marks what the loader will skip among the mods that are on:
@@ -355,7 +417,7 @@ func scanPakMods(loaderDir, tildeDir string) (mods []*PakMod, staleEntries []str
 // .utoc count as one name) and a .utoc without its .ucas. A .pak needs a .ucas
 // only when it comes with a .utoc. A .pak the game loads from ~mods by itself
 // is loaded first, also when it is switched off, so it wins a name clash.
-func checkContainers(mods []*PakMod) {
+func (fn folderNames) checkContainers(mods []*PakMod) {
 	var plan []*Container
 	owner := map[*Container]*PakMod{}
 	for _, m := range mods {
@@ -367,12 +429,21 @@ func checkContainers(mods []*PakMod) {
 			}
 		}
 	}
+	// the plan positions of the containers that share each name, in order:
+	// only those are compared, not every pair in a folder of many files
+	keys := make([]string, len(plan))
+	byKey := map[string][]int{}
+	for i, c := range plan {
+		keys[i] = containerKey(c.Name)
+		byKey[keys[i]] = append(byKey[keys[i]], i)
+	}
 	for i, c := range plan {
 		if c.Skip != "" {
 			continue
 		}
-		for _, d := range plan[i+1:] {
-			if d.Skip != "" || containerKey(c.Name) != containerKey(d.Name) {
+		for _, j := range byKey[keys[i]] {
+			d := plan[j]
+			if j <= i || d.Skip != "" {
 				continue
 			}
 			older, newer := d, c
@@ -395,10 +466,10 @@ func checkContainers(mods []*PakMod) {
 		}
 	}
 	for _, c := range plan {
-		if isPakName(c.Name) && sibling(c.Path, ".utoc") == "" {
+		if isPakName(c.Name) && fn.sibling(c.Path, ".utoc") == "" {
 			continue // a .pak on its own
 		}
-		if c.Skip == "" && sibling(c.Path, ".ucas") == "" {
+		if c.Skip == "" && fn.sibling(c.Path, ".ucas") == "" {
 			base := strings.TrimSuffix(c.Name, filepath.Ext(c.Name))
 			c.Skip = "Won't load: part of this mod is missing (" + base + ".ucas). Download it again, or ask its author for the full files."
 		}
@@ -414,10 +485,10 @@ func checkContainers(mods []*PakMod) {
 }
 
 // describeMod fills in sizes, the files each container changes and Skin Studio details.
-func describeMod(m *PakMod) {
+func (fn folderNames) describeMod(m *PakMod) {
 	for _, c := range m.Containers {
 		for _, ext := range []string{".utoc", ".ucas", ".pak"} {
-			if p := sibling(c.Path, ext); p != "" {
+			if p := fn.sibling(c.Path, ext); p != "" {
 				if st, err := os.Stat(p); err == nil {
 					c.Size += st.Size()
 				}
@@ -427,7 +498,7 @@ func describeMod(m *PakMod) {
 		if c.Mtime.After(m.Mtime) {
 			m.Mtime = c.Mtime
 		}
-		if p := sibling(c.Path, ".utoc"); p != "" {
+		if p := fn.sibling(c.Path, ".utoc"); p != "" {
 			if toc, err := readUtoc(p); err == nil {
 				c.ids = toc.packageIDs()
 				c.Files = toc.assetNames()
@@ -597,7 +668,9 @@ func addModNotes(mods []*PakMod, run *RunInfo, mode string) {
 
 // nativeNotes: a mod with .pak files in ~mods. The game loads those by itself,
 // so the switch and the load order don't change them; Remove does. The note
-// shows also when the mod is switched off, where it matters most.
+// shows also when the mod is switched off, where it matters most. While the
+// ~mods folder is in storage the game loads none of them: the note says what
+// happens when the player switches back to Modded.
 func nativeNotes(m *PakMod) []Note {
 	n := 0
 	for _, c := range m.Containers {
@@ -611,6 +684,13 @@ func nativeNotes(m *PakMod) []Note {
 	these := "its .pak files"
 	if n == 1 && len(m.Containers) == 1 {
 		these = "it"
+	}
+	if m.inStorage {
+		even := "whatever the switch and the list say"
+		if !m.Enabled {
+			even = "even though it is switched off"
+		}
+		return []Note{{"info", "In storage now, so the game doesn't load " + these + ". When you switch back to Modded, the game loads " + these + " from the ~mods folder by itself, " + even + ". To stop that, use Remove."}}
 	}
 	if !m.Enabled {
 		head := "Still loads"

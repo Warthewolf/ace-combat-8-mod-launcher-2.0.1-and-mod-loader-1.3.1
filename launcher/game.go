@@ -58,13 +58,23 @@ func holdsMods(storage string) bool {
 // and every switched-off and removed mod would seem to be gone. So the storage
 // folder of the old place stays in use; "Use the default" in Settings moves it
 // next to the game. A game folder that is still there is another install, and
-// keeps its own storage folder.
+// keeps its own storage folder. So does one on a drive that is not connected:
+// it did not move, and another copy chosen meanwhile must not take its mods.
 func keepStorageAfterMove(s *Settings, oldRoot, newRoot string) {
 	if oldRoot == "" || samePath(oldRoot, newRoot) || looksLikeGame(oldRoot) {
 		return
 	}
+	if gameDirUnplugged(oldRoot) {
+		if s.StorageDir != "" && samePath(s.StorageGame, oldRoot) {
+			logf("the game folder %s can't be found; its chosen storage folder %s stays with it", oldRoot, s.StorageDir)
+		}
+		return
+	}
 	if s.StorageDir != "" && samePath(s.StorageGame, oldRoot) {
-		if isDir(s.StorageDir) && !isInside(s.StorageDir, newRoot) {
+		// also when the chosen folder can't be found (its drive is not
+		// connected): the window then says so and offers to choose it again,
+		// instead of showing an empty storage folder as if the mods were gone
+		if !isInside(s.StorageDir, newRoot) {
 			s.StorageGame = newRoot
 			logf("the game moved from %s to %s; the chosen storage folder %s stays in use", oldRoot, newRoot, s.StorageDir)
 		}
@@ -338,8 +348,16 @@ func currentGame() (Game, bool) {
 	}
 	foundElsewhere = other
 	foundMu.Unlock()
+	// The player can choose the game folder while the search runs (it can take
+	// seconds): their choice wins over what the search found.
 	if p != "" {
+		chosen := ""
 		change := func(s *Settings) {
+			chosen = ""
+			if looksLikeGame(s.GameDir) {
+				chosen = s.GameDir // chosen meanwhile; checked here, as it is saved
+				return
+			}
 			keepStorageAfterMove(s, s.GameDir, p)
 			s.GameDir = p
 		}
@@ -349,8 +367,14 @@ func currentGame() (Game, bool) {
 			change(&settings) // still use it now; it is looked for again at the next start
 			settingsMu.Unlock()
 		}
+		if chosen != "" {
+			return Game{Root: chosen}, true
+		}
 		logf("found the game at %s", p)
 		return Game{Root: p}, true
+	}
+	if s = getSettings(); looksLikeGame(s.GameDir) {
+		return Game{Root: s.GameDir}, true // chosen meanwhile
 	}
 	lastNotFound = time.Now()
 	return Game{}, false
