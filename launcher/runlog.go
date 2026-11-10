@@ -47,6 +47,9 @@ var (
 	reModRoot      = regexp.MustCompile(`^mod root=(.+)$`)
 	reTildeRoot    = regexp.MustCompile(`^~mods folder=(.+)$`)
 	reUcasName     = regexp.MustCompile(`\(([^()]+\.ucas)\)`)
+	// 1.3: the Mod Loader's .pak hook saw the game open a *_P.pak:
+	// "custom pak: signedMode=1 -> 0 path=../../../Game/Content/Paks/~mods/Font_P.pak"
+	reCustomPak = regexp.MustCompile(`^custom pak: signedMode=-?\d+ -> 0 path=(.*)$`)
 )
 
 func readRunInfo(loaderDir string) *RunInfo {
@@ -69,8 +72,9 @@ func logPath(p string) string {
 	return strings.ToLower(strings.TrimSpace(strings.ReplaceAll(p, "/", `\`)))
 }
 
-// runSkip is a container the Mod Loader skipped; a later "mounting" line for
-// the same path (the deferred .pak pass) takes it back.
+// runSkip is a container the Mod Loader skipped. A later "mounting" line for
+// the same path (the deferred .pak pass) takes it back, and a later skip for
+// another reason replaces it: the last pass decides.
 type runSkip struct {
 	path string // logPath form
 	orig string // as the log wrote it
@@ -83,6 +87,12 @@ func parseRunLog(text string) *RunInfo {
 	cur := ""
 	sawDone, sawHook, nothing := false, false, false
 	pakUnavailable := false
+	// pakHook: the Mod Loader's .pak hook was in place; startedLate: only after
+	// the game had opened its .pak files (~mods too). gameOpened: the file
+	// names of the ~mods *_P.pak files the hook saw the game open; mounted:
+	// the file names the Mod Loader mounted itself.
+	pakHook, startedLate := false, false
+	gameOpened, mounted := map[string]bool{}, map[string]bool{}
 	modRoot, tildeRoot := "", ""
 	var skips []*runSkip
 	for _, raw := range strings.Split(text, "\n") {
@@ -114,9 +124,19 @@ func parseRunLog(text string) *RunInfo {
 			ri.Summary = "The Mod Loader did nothing, because another mod loader or a .pak signature bypass is installed. Only one can work: remove the other one. Look for other mod loader folders in ue4ss\\Mods, and for .dll files next to AceCombat8.exe other than dwmapi.dll."
 		case strings.HasPrefix(line, "hook installed"):
 			sawHook = true
+		case strings.HasPrefix(line, "Pak hook installed"):
+			pakHook = true
+		case strings.HasPrefix(line, "the loader started after the game mounted"):
+			startedLate = true
 		case strings.HasPrefix(line, "nothing to mount"):
 			nothing = true
 			sawDone = true
+		}
+		if m := reCustomPak.FindStringSubmatch(line); m != nil {
+			if p := logPath(m[1]); strings.HasPrefix(p, `~mods\`) || strings.Contains(p, `\~mods\`) {
+				gameOpened[p[strings.LastIndex(p, `\`)+1:]] = true
+			}
+			continue
 		}
 		if m := reMounting.FindStringSubmatch(line); m != nil {
 			cur = strings.ToLower(m[1])
@@ -124,6 +144,7 @@ func parseRunLog(text string) *RunInfo {
 				ri.Mods[cur] = &ModRun{}
 			}
 			p := logPath(m[2])
+			mounted[p[strings.LastIndex(p, `\`)+1:]] = true
 			for _, s := range skips {
 				if s.path == p {
 					s.gone = true // the deferred .pak pass mounted it after all
@@ -171,8 +192,13 @@ func parseRunLog(text string) *RunInfo {
 			p := logPath(m[1])
 			dup := false
 			for _, s := range skips {
-				if s.path == p && s.why == m[2] && !s.gone {
+				if s.path != p || s.gone {
+					continue
+				}
+				if s.why == m[2] {
 					dup = true // the deferred .pak pass checks the plan again
+				} else {
+					s.gone = true // and its answer is the one that counts
 				}
 			}
 			if !dup {
@@ -207,8 +233,17 @@ func parseRunLog(text string) *RunInfo {
 		if i := strings.LastIndex(file, `\`); i >= 0 {
 			file = file[i+1:]
 		}
+		// A *_P.pak in ~mods that the game opened itself, through the Mod
+		// Loader's .pak hook, is loaded whatever the Mod Loader then decided
+		// about it: it can't mount .pak files on this game version, it couldn't
+		// check the game's table yet, or a newer copy elsewhere has its name.
+		// Unless the Mod Loader mounted a file of that name: then the game's
+		// table didn't have it.
+		name := s.path[strings.LastIndex(s.path, `\`)+1:]
+		gameLoaded := tilde && isPakName(name) && (gameOpened[name] || pakHook && !startedLate) && !mounted[name]
 		switch {
-		case strings.Contains(s.why, "already present in the native mount table") || strings.Contains(s.why, "already mounted a container with this name"):
+		case strings.Contains(s.why, "already present in the native mount table") || strings.Contains(s.why, "already mounted a container with this name"),
+			gameLoaded && (strings.Contains(s.why, "unavailable") || strings.HasPrefix(s.why, "same name as")):
 			if tilde {
 				// .pak files in ~mods: the game mounts them itself, before the Mod Loader runs
 				r := runFor(key)

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -42,6 +43,20 @@ var (
 	reProblemPath = regexp.MustCompile(`(?i)@?[A-Za-z]:[\\/][^<>"|?*\r\n]*?[\\/]ue4ss[\\/]Mods[\\/]`)
 )
 
+// lastScriptRun is what parseScriptRun gave for the UE4SS.log read last, by
+// its path, size and date. The log stays the same from one game start to the
+// next, and a big one takes a moment to read, so the state loads in between
+// don't read it again. Only a log last written a few seconds before is kept:
+// a file's date can be coarse, and a log written again within the same tick
+// must still be read again.
+var lastScriptRun struct {
+	sync.Mutex
+	path  string
+	size  int64
+	mtime time.Time
+	sr    *ScriptRun
+}
+
 // readScriptRun returns nil when UE4SS's log can't be read or names no started
 // mods (then the window says nothing rather than guess).
 func readScriptRun(ue4ssRoot string) *ScriptRun {
@@ -50,17 +65,40 @@ func readScriptRun(ue4ssRoot string) *ScriptRun {
 	if err != nil || st.Size() > 64<<20 {
 		return nil
 	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return nil
+	c := &lastScriptRun
+	c.Lock()
+	sr, known := c.sr, c.path == p && c.size == st.Size() && c.mtime.Equal(st.ModTime())
+	c.Unlock()
+	if !known {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		sr = parseScriptRun(decodeText(b))
+		if time.Since(st.ModTime()) > 3*time.Second {
+			c.Lock()
+			c.path, c.size, c.mtime, c.sr = p, st.Size(), st.ModTime(), sr
+			c.Unlock()
+		}
 	}
-	sr := parseScriptRun(decodeText(b))
 	if sr == nil {
 		return nil
 	}
+	sr = sr.clone() // addFolders changes it
 	sr.When = st.ModTime()
 	sr.addFolders(listScriptMods(ue4ssRoot))
 	return sr
+}
+
+func (sr *ScriptRun) clone() *ScriptRun {
+	c := &ScriptRun{When: sr.When, Started: make(map[string]bool, len(sr.Started))}
+	for k, v := range sr.Started {
+		c.Started[k] = v
+	}
+	if sr.Problems != nil {
+		c.Problems = append([]string{}, sr.Problems...)
+	}
+	return c
 }
 
 // addFolders adds each script mod folder UE4SS started under its own folder
@@ -104,15 +142,21 @@ func parseScriptRun(text string) *ScriptRun {
 	seen := map[string]bool{}
 	for _, raw := range strings.Split(text, "\n") {
 		line := strings.TrimRight(raw, "\r")
-		if m := reScriptStartedTxt.FindStringSubmatch(line); m != nil {
-			sr.Started[strings.ToLower(m[1])] = true
-			continue
+		// The log can be tens of MB of a mod's own prints: a cheap look for
+		// the words each pattern needs comes first, and most lines stop there.
+		if strings.Contains(line, "' has enabled.txt, starting mod") {
+			if m := reScriptStartedTxt.FindStringSubmatch(line); m != nil {
+				sr.Started[strings.ToLower(m[1])] = true
+				continue
+			}
 		}
-		if m := reScriptStarted.FindStringSubmatch(line); m != nil {
-			sr.Started[strings.ToLower(m[1])] = true
-			continue
+		if strings.Contains(line, "Starting ") {
+			if m := reScriptStarted.FindStringSubmatch(line); m != nil {
+				sr.Started[strings.ToLower(m[1])] = true
+				continue
+			}
 		}
-		if reScriptProblem.MatchString(line) && len(sr.Problems) < 8 {
+		if len(sr.Problems) < 8 && mayBeScriptProblem(line) && reScriptProblem.MatchString(line) {
 			// drop the "[time]" prefix UE4SS puts on each line
 			msg := line
 			if i := strings.Index(msg, "] "); strings.HasPrefix(msg, "[") && i > 0 {
@@ -138,6 +182,51 @@ func parseScriptRun(text string) *ScriptRun {
 		return nil
 	}
 	return sr
+}
+
+// mayBeScriptProblem is false for a line reScriptProblem can't match: each of
+// its patterns holds one of these words, in any case. (None holds a k or an s,
+// letters that also match a non-ASCII one, so comparing bytes is enough.)
+func mayBeScriptProblem(line string) bool {
+	for i := 0; i < len(line); i++ {
+		switch line[i] | 0x20 {
+		case 'e':
+			if hasWordAt(line, i, "error") || hasWordAt(line, i, "exception") || hasWordAt(line, i, "execute_file") {
+				return true
+			}
+		case 'f':
+			if hasWordAt(line, i, "fail") {
+				return true
+			}
+		case 'c':
+			if hasWordAt(line, i, "could not load") {
+				return true
+			}
+		case 'l':
+			if hasWordAt(line, i, "lua_pcall") || hasWordAt(line, i, "lual_loadfile") {
+				return true
+			}
+		case 'n':
+			if hasWordAt(line, i, "not found") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasWordAt: s holds word (lower case ASCII) at i, its letters in any case.
+func hasWordAt(s string, i int, word string) bool {
+	if len(s)-i < len(word) {
+		return false
+	}
+	for j := 0; j < len(word); j++ {
+		c, w := s[i+j], word[j]
+		if c != w && !('a' <= w && w <= 'z' && c == w-32) {
+			return false
+		}
+	}
+	return true
 }
 
 // problemMod finds the script mod a UE4SS error line is about, or "".

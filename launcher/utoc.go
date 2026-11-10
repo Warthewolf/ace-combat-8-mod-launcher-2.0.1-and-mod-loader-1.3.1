@@ -224,7 +224,12 @@ func (u *utocInfo) readDirectoryIndex(d []byte) {
 		stack = stack[:len(stack)-1]
 		dn := dirs[it.dir]
 		p := it.path
+		// Each length is checked before the path is put together: a crafted
+		// index can name one long string from millions of entries.
 		if dn.name != none {
+			if len(p)+len(name(dn.name))+1 > maxUtocPathLen {
+				continue
+			}
 			p += name(dn.name) + "/"
 		}
 		if len(p) > maxUtocPathLen {
@@ -239,10 +244,10 @@ func (u *utocInfo) readDirectoryIndex(d []byte) {
 			if uint64(fe.data) >= uint64(len(u.types)) {
 				continue // names a chunk the container doesn't have
 			}
-			full := p + name(fe.name)
-			if len(full) > maxUtocPathLen {
+			if len(p)+len(name(fe.name)) > maxUtocPathLen {
 				continue
 			}
+			full := p + name(fe.name)
 			if budget -= len(full); budget < 0 {
 				return
 			}
