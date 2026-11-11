@@ -59,9 +59,8 @@ Safer with your mods
 Adding and updating mods
 - An update whose folder has a new name ("Hornet v1" to "Hornet v2") keeps
   the mod's place in the load order and its on/off state: a mod you
-  switched off stays off. Downloading a
-  script mod again ("CoolCam (1).zip") updates it instead of adding a second
-  copy that runs as well.
+  switched off stays off. Downloading a script mod again ("CoolCam (1).zip")
+  updates it instead of adding a second copy that runs as well.
 - A picked version is named after its download ("Su-57 Liveries - Red").
   When several downloads are added together, the launcher asks about all
   their versions before adding anything.
