@@ -55,7 +55,13 @@ func pickFolder(title, start string, allowNew bool) (string, error) {
 	return strings.TrimSpace(os.Getenv("ACE8_FAKE_PICK")), nil
 }
 
+// pickOpen: tests keep the file window "open" until they close this channel.
+var pickOpen chan struct{}
+
 func pickFiles(title string) ([]string, error) {
+	if pickOpen != nil {
+		<-pickOpen
+	}
 	v := strings.TrimSpace(os.Getenv("ACE8_FAKE_PICK"))
 	if v == "" {
 		return nil, nil

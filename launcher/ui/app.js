@@ -132,6 +132,10 @@ const fmWord = () => isLinux() ? 'a folder window' : 'Explorer';
 // ---------------------------------------------------------------- toasts & dialogs
 function toast(text, kind = 'ok', opts = {}) {
   if (opts.id) for (const old of $$('#toasts .toast')) if (old.dataset.id === opts.id) old.remove();
+  // the same message again replaces the old one instead of piling up
+  for (const old of $$('#toasts .toast:not(.progress)')) {
+    if (!old.dataset.id && old.classList.contains(kind) && old.querySelector('.toast-text').textContent === String(text)) old.remove();
+  }
   const t = el(`<div class="toast ${kind}" role="${kind === 'bad' ? 'alert' : 'status'}"><div class="toast-text">${esc(text)}</div></div>`);
   if (opts.id) t.dataset.id = opts.id;
   if (opts.list && opts.list.length) t.appendChild(el(`<ul>${opts.list.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`));
@@ -1135,7 +1139,10 @@ async function chooseAndAdd(folder) {
   const btns = [$('#btnAddFiles'), $('#btnAddFolder')];
   for (const b of btns) b.disabled = true;
   let paths = null;
-  try { paths = await act('pick-mods', { folder }); } finally { inFlight.delete('pick-mods'); for (const b of btns) b.disabled = false; }
+  // the window can open behind the launcher, so say where to look; dropping still works meanwhile
+  const hint = toastProgress(folder ? 'Choose the mod\'s folder in the window that opened, then press Select Folder.'
+    : 'Choose the mod in the window that opened, then press Open. Or drag it onto this window.');
+  try { paths = await act('pick-mods', { folder }); } finally { hint.remove(); inFlight.delete('pick-mods'); for (const b of btns) b.disabled = false; }
   if (paths && paths.length) addPaths(paths);
 }
 

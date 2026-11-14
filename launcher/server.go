@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -241,21 +242,33 @@ func newMux(port int) http.Handler {
 		return addFrom(g, req.Paths, req.Upload, req.Pick)
 	})
 	act("upload", "receiving files", func(g Game, r *http.Request) (any, error) { return receiveUpload(r) })
-	act("pick-mods", "waiting for you to choose files", func(g Game, r *http.Request) (any, error) {
-		var req struct{ Folder bool }
-		json.NewDecoder(r.Body).Decode(&req)
-		if req.Folder {
-			p, err := pickFolder("Choose the folder of the mod you want to add", "", false)
-			if p == "" || err != nil {
-				return []string{}, err
-			}
-			return []string{p}, nil
+	// Choosing files changes nothing, so the file window doesn't hold the busy
+	// lock: a mod dropped onto the launcher while it is open is added as usual.
+	// One file window at a time, though.
+	var pickMu sync.Mutex
+	api("pick-mods", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
 		}
-		ps, err := pickFiles("Choose a mod: its .zip, or its .utoc, .ucas and .pak files")
-		if ps == nil {
-			ps = []string{}
+		if _, ok := currentGame(); !ok {
+			writeErr(w, errNoGame())
+			return
 		}
-		return ps, err
+		if !pickMu.TryLock() {
+			writeErr(w, errors.New("a window to choose a mod is open already. Choose the mod there and press Open, or press Cancel"))
+			return
+		}
+		v, err := func() (any, error) {
+			defer pickMu.Unlock()
+			return pickMods(r)
+		}()
+		if err != nil {
+			logf("pick-mods failed: %v", err)
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "result": v, "state": buildState()})
 	})
 	act("remove", "removing a mod", func(g Game, r *http.Request) (any, error) {
 		var req struct{ Kind, Key string }
@@ -1083,4 +1096,22 @@ func skinListNotLast(mods []*PakMod) bool {
 		}
 	}
 	return false
+}
+
+// pickMods opens the file window to choose a mod's files (or its folder).
+func pickMods(r *http.Request) (any, error) {
+	var req struct{ Folder bool }
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.Folder {
+		p, err := pickFolder("Choose the folder of the mod you want to add", "", false)
+		if p == "" || err != nil {
+			return []string{}, err
+		}
+		return []string{p}, nil
+	}
+	ps, err := pickFiles("Choose a mod: its .zip, or its .utoc, .ucas and .pak files")
+	if ps == nil {
+		ps = []string{}
+	}
+	return ps, err
 }

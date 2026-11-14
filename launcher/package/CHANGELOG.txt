@@ -1,6 +1,17 @@
 ACE8 Mod Launcher - changelog
 =============================
 
+2.1.1 (2026-11-14)
+------------------
+- Dropping a mod onto the launcher works while the "Choose a mod" window
+  from Add a mod... is still open. Before, every drop was refused with "The
+  launcher is still busy: waiting for you to choose files" until that
+  window was closed.
+- While that window is open, a message says to choose the mod there and
+  press Open, or to drag it onto the launcher. The window can open behind
+  the launcher.
+- The same error shown again replaces the old one instead of piling up.
+
 2.1.0 (2026-11-07)
 ------------------
 Easier for first-time players
