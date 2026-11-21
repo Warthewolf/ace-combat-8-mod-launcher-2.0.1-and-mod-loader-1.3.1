@@ -230,6 +230,47 @@ func processRunning(names ...string) bool {
 
 func steamRunning() bool { return processRunning("steam.exe") }
 
+// endProcesses ends every running program with one of these names. A game
+// that runs as administrator can't be ended from here: errEndRefused.
+func endProcesses(names ...string) (int, error) {
+	want := map[string]bool{}
+	for _, n := range names {
+		want[strings.ToLower(n)] = true
+	}
+	snap, err := syscall.CreateToolhelp32Snapshot(syscall.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0, err
+	}
+	var pids []uint32
+	var pe syscall.ProcessEntry32
+	pe.Size = uint32(unsafe.Sizeof(pe))
+	for err = syscall.Process32First(snap, &pe); err == nil; err = syscall.Process32Next(snap, &pe) {
+		if want[strings.ToLower(syscall.UTF16ToString(pe.ExeFile[:]))] {
+			pids = append(pids, pe.ProcessID)
+		}
+	}
+	syscall.CloseHandle(snap)
+	const processTerminate = 0x0001
+	n := 0
+	var refused error
+	for _, pid := range pids {
+		h, err := syscall.OpenProcess(processTerminate, false, pid)
+		if err != nil {
+			if errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
+				refused = errEndRefused
+			}
+			continue
+		}
+		if syscall.TerminateProcess(h, 1) == nil {
+			n++
+		} else {
+			refused = errEndRefused
+		}
+		syscall.CloseHandle(h)
+	}
+	return n, refused
+}
+
 // startDetached starts a program that keeps running after the launcher closes.
 // raw is added to the command line exactly as the player typed it, so quotes
 // such as -ExecCmds="a b" reach the game unchanged.

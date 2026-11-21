@@ -69,6 +69,37 @@ func pickFiles(title string) ([]string, error) {
 	return strings.Split(v, "|"), nil
 }
 
+// endProcesses takes the names off the "running" list, and records it.
+// ACE8_FAKE_END_REFUSED makes it fail the way a game run as administrator does.
+func endProcesses(names ...string) (int, error) {
+	if os.Getenv("ACE8_FAKE_END_REFUSED") != "" {
+		return 0, errEndRefused
+	}
+	p := os.Getenv("ACE8_FAKE_RUNNING")
+	if p == "" {
+		return 0, nil
+	}
+	b, _ := os.ReadFile(p)
+	var keep []string
+	n := 0
+	for _, l := range strings.Split(string(b), "\n") {
+		gone := false
+		for _, nm := range names {
+			if strings.EqualFold(strings.TrimSpace(l), nm) {
+				gone = true
+			}
+		}
+		if gone {
+			n++
+		} else {
+			keep = append(keep, l)
+		}
+	}
+	os.WriteFile(p, []byte(strings.Join(keep, "\n")), 0o644)
+	record("ended.txt", strings.Join(names, " "))
+	return n, nil
+}
+
 // ACE8_FAKE_RUNNING names a file listing the "running" programs, one per line.
 func processRunning(names ...string) bool {
 	p := os.Getenv("ACE8_FAKE_RUNNING")

@@ -198,6 +198,10 @@ func newMux(port int) http.Handler {
 		}
 		return g.switchTo(req.To)
 	})
+	// the game's window is gone, but its program is still running
+	act("end-game", "closing the game", func(g Game, r *http.Request) (any, error) {
+		return endGame()
+	})
 	act("play", "starting the game", func(g Game, r *http.Request) (any, error) {
 		var req struct{ Force bool }
 		json.NewDecoder(r.Body).Decode(&req)

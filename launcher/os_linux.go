@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 var (
@@ -255,6 +256,45 @@ func processRunning(names ...string) bool {
 }
 
 func steamRunning() bool { return processRunning("steam") }
+
+// endProcesses asks every running program with one of these names to close
+// (SIGTERM), and ends the ones still there after a few seconds (SIGKILL).
+func endProcesses(names ...string) (int, error) {
+	find := func() []int {
+		var pids []int
+		ents, _ := os.ReadDir("/proc")
+		for _, e := range ents {
+			pid, err := strconv.Atoi(e.Name())
+			if err != nil {
+				continue
+			}
+			comm, _ := os.ReadFile("/proc/" + e.Name() + "/comm")
+			cmdline, _ := os.ReadFile("/proc/" + e.Name() + "/cmdline")
+			arg0 := string(cmdline)
+			if i := strings.IndexByte(arg0, 0); i >= 0 {
+				arg0 = arg0[:i]
+			}
+			if procMatches(strings.TrimSpace(string(comm)), arg0, names) {
+				pids = append(pids, pid)
+			}
+		}
+		return pids
+	}
+	pids := find()
+	var refused error
+	for _, pid := range pids {
+		if err := syscall.Kill(pid, syscall.SIGTERM); errors.Is(err, syscall.EPERM) {
+			refused = errEndRefused
+		}
+	}
+	for i := 0; i < 20 && len(find()) > 0; i++ {
+		time.Sleep(150 * time.Millisecond)
+	}
+	for _, pid := range find() {
+		syscall.Kill(pid, syscall.SIGKILL)
+	}
+	return len(pids), refused
+}
 
 // Starting AceCombat8.exe directly is for Windows; on Linux Steam starts it.
 func startDetached(exe, dir string, args []string, raw string, env []string) error {

@@ -414,6 +414,7 @@ function renderPlayBar(withSteps) {
 function renderLive() {
   if (playing) return; // the Play button's own messages show until the launcher answers
   const s = STATE, st = STATUS || s.status;
+  $('#stuckRow').hidden = !st.gameRunning;
   const L = st.launch;
   if (st.steamStartMissed) {
     setLive('<span class="bad-text">The game started without the launcher\'s line in Steam\'s launch options, so anti-cheat is on and the mods won\'t load. Close it and see Settings, Starting the game.</span>');
@@ -1451,6 +1452,21 @@ async function poll() {
   pollTimer = setTimeout(poll, document.hidden ? 8000 : 2000);
 }
 function pollSoon() { clearTimeout(pollTimer); pollTimer = setTimeout(poll, 600); }
+
+// "Game running" that doesn't go away: check again now, or end the game's program
+$('#btnRefresh').onclick = e => withBusy(e.currentTarget, 'refresh', 'Checking…', async () => {
+  clearTimeout(pollTimer);
+  await loadState();
+  await poll();
+  toast(gameRunningNow() ? 'The game\'s program is still running. If its window is closed, press End the game.' : 'The game is closed. You can switch and play again.',
+    gameRunningNow() ? 'warn' : 'ok', { id: 'refresh' });
+});
+$('#btnEndGame').onclick = e => withBusy(e.currentTarget, 'end-game', 'Ending…', async () => {
+  const v = await dialog({ title: 'End the game?', html: '<p>Use this when you have closed Ace Combat 8 but the launcher still says it\'s running: the game\'s program is still going in the background.</p><p>If the game is actually open, it closes at once and anything not saved is lost.</p>',
+    buttons: [{ label: 'Cancel', value: 'cancel', kind: 'ghost' }, { label: 'End the game', value: 'end', kind: 'danger' }] });
+  if (v !== 'end') return;
+  if (await act('end-game', {}) !== null) { toast('The game is closed. You can switch and play again.', 'ok', { id: 'refresh' }); pollSoon(); }
+});
 document.addEventListener('visibilitychange', () => { if (!document.hidden) pollSoon(); });
 window.addEventListener('focus', pollSoon);
 

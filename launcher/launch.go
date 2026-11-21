@@ -41,6 +41,29 @@ var gameExeNames = []string{"AceCombat8.exe", "start_protected_game.exe"}
 
 func gameRunning() bool { return processRunning(gameExeNames...) }
 
+var errEndRefused = errors.New("Windows didn't let the launcher close the game, because it runs as administrator. Close it yourself: press Ctrl+Shift+Esc for Task Manager, then Details, select AceCombat8.exe and press End task")
+
+// endGame ends a game that is still running in the background after its
+// window closed (it can happen when a game doesn't finish shutting down), so
+// the player can switch and play again. Only the game's own programs.
+func endGame() (int, error) {
+	if !gameRunning() {
+		return 0, nil
+	}
+	n, err := endProcesses(gameExeNames...)
+	for i := 0; i < 33 && gameRunning(); i++ {
+		time.Sleep(150 * time.Millisecond)
+	}
+	if gameRunning() {
+		if err == nil {
+			err = errors.New("the game is still running. Try again in a moment, or close it in Task Manager (Ctrl+Shift+Esc)")
+		}
+		return n, err
+	}
+	logf("ended the game's programs (%d) at the player's request", n)
+	return n, nil
+}
+
 // what the community put in Steam's launch options for modded play
 func isOfflineLaunchOptions(s string) bool {
 	l := strings.ToLower(s)
