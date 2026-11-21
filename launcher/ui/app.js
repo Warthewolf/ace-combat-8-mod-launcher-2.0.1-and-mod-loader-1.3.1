@@ -557,6 +557,8 @@ function renderLastRun() {
   if (sr) {
     for (const m of scriptsOn) {
       if (sr.started[m.name.toLowerCase()]) rows.push(`<li><span class="st ok">Started</span><span>${esc(m.name)} <span class="msg">Script mod</span></span></li>`);
+      // UE4SS starts script mods a little after the game; while it runs, this is not a failure yet
+      else if (gameRunningNow() && !newer(m, sr.when)) rows.push(`<li><span class="st off">Starting…</span><span>${esc(m.name)} <span class="msg">UE4SS starts script mods once the game has loaded. This updates by itself.</span></span></li>`);
       else rows.push(`<li><span class="st off">Not started</span><span>${esc(m.name)} <span class="msg">${esc(newer(m, sr.when) || 'UE4SS didn\'t start it. Check that the mod\'s folder has Scripts\\main.lua or dlls\\main.dll, or look in the UE4SS log.')}</span></span></li>`);
     }
     for (const p of sr.problems || []) rows.push(`<li><span class="st no">UE4SS</span><span><span class="msg">${esc(p)}</span></span></li>`);

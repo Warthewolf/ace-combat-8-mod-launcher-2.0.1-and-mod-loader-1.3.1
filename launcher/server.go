@@ -547,6 +547,10 @@ type Status struct {
 	SteamStartMissed bool `json:"steamStartMissed,omitempty"`
 }
 
+// scriptStartWatch: how long after Play the window follows UE4SS.log, for the
+// script mods UE4SS starts once the game has loaded.
+var scriptStartWatch = 5 * time.Minute
+
 func buildStatus() Status {
 	st := Status{GameRunning: gameRunning(), SteamRunning: steamRunning(), Busy: busy.What(), Launch: currentLaunch()}
 	g, ok := currentGame()
@@ -563,6 +567,15 @@ func buildStatus() Status {
 		if st.Launch != nil {
 			if s, err := os.Stat(join(g.loaderDir(), "AC8IoStoreLoader.log")); err == nil && s.ModTime().After(st.Launch.LogBefore) && s.ModTime().After(st.Launch.Started.Add(-2*time.Second)) {
 				st.LogFresh = true
+			}
+			// UE4SS starts the script mods a few seconds after the Mod Loader
+			// wrote its log, so the window reads UE4SS.log again as it grows.
+			// Only for the first minutes after Play: a mod that keeps writing
+			// to the log would otherwise reload the window all game long.
+			if time.Since(st.Launch.Started) < scriptStartWatch {
+				if s, err := os.Stat(join(g.ue4ssRoot(), "UE4SS.log")); err == nil {
+					fmt.Fprintf(&fp, "u%d.", s.ModTime().Unix())
+				}
 			}
 		}
 	}

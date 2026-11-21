@@ -1,6 +1,15 @@
 ACE8 Mod Launcher - changelog
 =============================
 
+2.1.2 (2026-11-21)
+------------------
+- Last game start: script mods no longer show "Not started" while they are
+  running. UE4SS starts them a few seconds after the Mod Loader, and the
+  window only read UE4SS's log once, before that. It now follows the log
+  for the first minutes after Play.
+- While the game is running, a script mod UE4SS hasn't started yet shows
+  "Starting...", not a warning.
+
 2.1.1 (2026-11-14)
 ------------------
 - Dropping a mod onto the launcher works while the "Choose a mod" window

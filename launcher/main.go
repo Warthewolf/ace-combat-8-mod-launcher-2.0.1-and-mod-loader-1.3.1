@@ -26,7 +26,7 @@ import (
 
 const (
 	appName    = "ACE8 Mod Launcher"
-	appVersion = "2.1.1"
+	appVersion = "2.1.2"
 	steamAppID = "2288340"
 	contact    = "Any issues please contact @voidcallsreaper on Discord"
 )
